@@ -1,0 +1,2127 @@
+```html
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EduCheck</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.3.0/build/global/luxon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@3.9.4/dist/full.css" rel="stylesheet" type="text/css" />
+    <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
+    <style>
+        .sidebar {
+            transition: all 0.3s;
+        }
+        .sidebar-collapsed {
+            width: 80px;
+        }
+        .sidebar-expanded {
+            width: 250px;
+        }
+        .calendar-day {
+            height: 100px;
+            overflow-y: auto;
+        }
+        .event-item {
+            font-size: 0.7rem;
+            padding: 2px 4px;
+            margin: 1px 0;
+            border-radius: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .attendance-present {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+        .attendance-absent {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+        .attendance-late {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen font-sans">
+    <div id="app"></div>
+    <script>
+        const STORAGE_KEY = 'educheck_data';
+        
+        // Estado global
+        let state = {
+            currentView: 'dashboard',
+            selectedInstitution: null,
+            selectedCourse: null,
+            selectedStudent: null,
+            selectedPeriod: 'cuatrimestre',
+            currentDate: luxon.DateTime.now(),
+            activeTab: 'dashboard'
+        };
+
+        // Datos iniciales
+        const defaultData = {
+            institutions: [],
+            courses: [],
+            students: [],
+            activities: [],
+            attendance: {}
+        };
+
+        // Cargar datos desde localStorage
+        function loadData() {
+            try {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {
+                    state.data = JSON.parse(saved);
+                } else {
+                    state.data = defaultData;
+                }
+            } catch (e) {
+                state.data = defaultData;
+            }
+        }
+
+        // Guardar datos en localStorage
+        function saveData() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
+        }
+
+        // Componentes
+        function Header() {
+            return `
+                <header class="bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-lg">
+                    <div class="container mx-auto px-4 py-4">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-3">
+                                <div class="bg-white bg-opacity-20 p-2 rounded-lg">
+                                    <i class="fas fa-check-circle text-2xl"></i>
+                                </div>
+                                <div>
+                                    <h1 class="text-2xl font-bold">EduCheck</h1>
+                                    <p class="text-sm opacity-90">Sistema de Gestión Docente</p>
+                                </div>
+                            </div>
+                            <button onclick="toggleSidebar()" class="md:hidden text-white">
+                                <i class="fas fa-bars text-xl"></i>
+                            </button>
+                        </div>
+                    </div>
+                </header>
+            `;
+        }
+
+        function Sidebar() {
+            return `
+                <aside id="sidebar" class="sidebar sidebar-expanded bg-white shadow-lg md:static fixed inset-y-0 left-0 z-40 transform md:transform-none transition-transform duration-300 ease-in-out w-64">
+                    <div class="p-4">
+                        <nav class="space-y-2">
+                            ${NavButton('dashboard', 'Dashboard', 'fas fa-th-large')}
+                            ${NavButton('institutions', 'Instituciones', 'fas fa-building')}
+                            ${NavButton('courses', 'Cursos', 'fas fa-book')}
+                            ${NavButton('students', 'Alumnos', 'fas fa-users')}
+                            ${NavButton('activities', 'Actividades', 'fas fa-calendar-alt')}
+                            ${NavButton('attendance', 'Asistencia', 'fas fa-clipboard-check')}
+                        </nav>
+                    </div>
+                </aside>
+            `;
+        }
+
+        function NavButton(view, label, icon) {
+            const isActive = state.currentView === view;
+            return `
+                <button onclick="navigateTo('${view}')" 
+                    class="w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors ${
+                        isActive ? 'bg-blue-100 text-blue-700' : 'text-gray-700 hover:bg-gray-100'
+                    }">
+                    <i class="${icon}"></i>
+                    <span>${label}</span>
+                </button>
+            `;
+        }
+
+        function Dashboard() {
+            const totalInstitutions = state.data.institutions.length;
+            const totalCourses = state.data.courses.length;
+            const totalStudents = state.data.students.length;
+            const totalActivities = state.data.activities.length;
+
+            return `
+                <div class="p-6">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6">Dashboard</h2>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        ${StatCard('Instituciones', totalInstitutions, 'bg-blue-500')}
+                        ${StatCard('Cursos', totalCourses, 'bg-green-500')}
+                        ${StatCard('Alumnos', totalStudents, 'bg-purple-500')}
+                        ${StatCard('Actividades', totalActivities, 'bg-orange-500')}
+                    </div>
+
+                    <div class="bg-white rounded-xl shadow-md p-6 mb-6">
+                        <h3 class="text-xl font-semibold mb-4">Próximas Actividades</h3>
+                        ${UpcomingActivities()}
+                    </div>
+
+                    <div class="bg-white rounded-xl shadow-md p-6">
+                        <h3 class="text-xl font-semibold mb-4">Estadísticas de Asistencia</h3>
+                        ${AttendanceStats()}
+                    </div>
+                </div>
+            `;
+        }
+
+        function StatCard(title, value, color) {
+            return `
+                <div class="bg-white rounded-lg shadow-md p-6 border-l-4 ${color} border-l-white">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-600 text-sm">${title}</p>
+                            <p class="text-3xl font-bold text-gray-800">${value}</p>
+                        </div>
+                        <div class="${color} bg-opacity-20 p-3 rounded-full">
+                            <i class="fas fa-chart-line text-2xl ${color.replace('500', '700')}"></i>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function UpcomingActivities() {
+            const now = luxon.DateTime.now();
+            const upcoming = state.data.activities
+                .filter(activity => luxon.DateTime.fromISO(activity.date) >= now)
+                .sort((a, b) => new Date(a.date) - new Date(b.date))
+                .slice(0, 5);
+
+            if (upcoming.length === 0) {
+                return '<p class="text-gray-500">No hay actividades próximas</p>';
+            }
+
+            return `
+                <div class="space-y-3">
+                    ${upcoming.map(activity => {
+                        const date = luxon.DateTime.fromISO(activity.date).toLocaleString(luxon.DateTime.DATE_MED);
+                        return `
+                            <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                <div>
+                                    <p class="font-medium">${activity.title}</p>
+                                    <p class="text-sm text-gray-600">${date}</p>
+                                </div>
+                                <span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
+                                    ${activity.type}
+                                </span>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        }
+
+        function AttendanceStats() {
+            // Mock data for stats
+            const totalClasses = Object.keys(state.data.attendance).length;
+            const totalPresent = Object.values(state.data.attendance).flat().filter(a => a.status === 'present').length;
+            const totalAbsent = Object.values(state.data.attendance).flat().filter(a => a.status === 'absent').length;
+            const totalLate = Object.values(state.data.attendance).flat().filter(a => a.status === 'late').length;
+            
+            const presentRate = totalClasses > 0 ? Math.round((totalPresent / (totalPresent + totalAbsent + totalLate)) * 100) : 0;
+
+            return `
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="text-center p-4 bg-green-50 rounded-lg">
+                        <p class="text-2xl font-bold text-green-600">${presentRate}%</p>
+                        <p class="text-sm text-gray-600">Tasa de Asistencia</p>
+                    </div>
+                    <div class="text-center p-4 bg-blue-50 rounded-lg">
+                        <p class="text-2xl font-bold text-blue-600">${totalClasses}</p>
+                        <p class="text-sm text-gray-600">Clases Registradas</p>
+                    </div>
+                </div>
+                <div class="mt-4 pt-4 border-t">
+                    <div class="flex justify-around text-center">
+                        <div>
+                            <p class="font-semibold text-green-600">${totalPresent}</p>
+                            <p class="text-xs text-gray-600">Presentes</p>
+                        </div>
+                        <div>
+                            <p class="font-semibold text-red-600">${totalAbsent}</p>
+                            <p class="text-xs text-gray-600">Ausentes</p>
+                        </div>
+                        <div>
+                            <p class="font-semibold text-yellow-600">${totalLate}</p>
+                            <p class="text-xs text-gray-600">Tardanzas</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function Institutions() {
+            return `
+                <div class="p-6">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-4 sm:mb-0">Instituciones</h2>
+                        <button onclick="showAddInstitutionModal()" 
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors">
+                            <i class="fas fa-plus"></i>
+                            <span>Agregar Institución</span>
+                        </button>
+                    </div>
+
+                    ${state.data.institutions.length === 0 ? 
+                    `<div class="bg-white rounded-xl shadow-md p-8 text-center">
+                        <i class="fas fa-building text-4xl text-gray-400 mb-4"></i>
+                        <p class="text-gray-600">No hay instituciones registradas</p>
+                        <button onclick="showAddInstitutionModal()" 
+                            class="mt-4 text-blue-600 hover:text-blue-800 font-medium">
+                            Agregar la primera institución
+                        </button>
+                    </div>` : 
+                    `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        ${state.data.institutions.map(inst => InstitutionCard(inst)).join('')}
+                    </div>`}
+                </div>
+            `;
+        }
+
+        function InstitutionCard(institution) {
+            return `
+                <div class="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition-shadow">
+                    <div class="p-6">
+                        <div class="flex justify-between items-start mb-4">
+                            <h3 class="text-xl font-semibold text-gray-800">${institution.name}</h3>
+                            <div class="flex space-x-2">
+                                <button onclick="editInstitution(${institution.id})" class="text-blue-600 hover:text-blue-800">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button onclick="deleteInstitution(${institution.id})" class="text-red-600 hover:text-red-800">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <p class="text-gray-600 mb-2"><i class="fas fa-map-marker-alt mr-2"></i>${institution.address}</p>
+                        <p class="text-gray-600"><i class="fas fa-phone mr-2"></i>${institution.phone}</p>
+                        
+                        <div class="mt-4 pt-4 border-t">
+                            <p class="text-sm text-gray-500">Cursos: ${state.data.courses.filter(c => c.institutionId === institution.id).length}</p>
+                            <p class="text-sm text-gray-500">Alumnos: ${getStudentsCountForInstitution(institution.id)}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function getStudentsCountForInstitution(institutionId) {
+            const courseIds = state.data.courses
+                .filter(course => course.institutionId === institutionId)
+                .map(course => course.id);
+            return state.data.students.filter(student => courseIds.includes(student.courseId)).length;
+        }
+
+        function Courses() {
+            return `
+                <div class="p-6">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-4 sm:mb-0">Cursos</h2>
+                        <button onclick="showAddCourseModal()" 
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors">
+                            <i class="fas fa-plus"></i>
+                            <span>Agregar Curso</span>
+                        </button>
+                    </div>
+
+                    ${state.data.courses.length === 0 ? 
+                    `<div class="bg-white rounded-xl shadow-md p-8 text-center">
+                        <i class="fas fa-book text-4xl text-gray-400 mb-4"></i>
+                        <p class="text-gray-600">No hay cursos registrados</p>
+                        <button onclick="showAddCourseModal()" 
+                            class="mt-4 text-blue-600 hover:text-blue-800 font-medium">
+                            Agregar el primer curso
+                        </button>
+                    </div>` : 
+                    `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        ${state.data.courses.map(course => CourseCard(course)).join('')}
+                    </div>`}
+                </div>
+            `;
+        }
+
+        function CourseCard(course) {
+            const institution = state.data.institutions.find(i => i.id === course.institutionId);
+            const studentCount = state.data.students.filter(s => s.courseId === course.id).length;
+            
+            return `
+                <div class="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition-shadow">
+                    <div class="p-6">
+                        <div class="flex justify-between items-start mb-4">
+                            <h3 class="text-xl font-semibold text-gray-800">${course.name}</h3>
+                            <div class="flex space-x-2">
+                                <button onclick="editCourse(${course.id})" class="text-blue-600 hover:text-blue-800">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button onclick="deleteCourse(${course.id})" class="text-red-600 hover:text-red-800">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <p class="text-gray-600 mb-2"><i class="fas fa-building mr-2"></i>${institution ? institution.name : 'Sin institución'}</p>
+                        <p class="text-gray-600 mb-2"><i class="fas fa-user-graduate mr-2"></i>${studentCount} alumnos</p>
+                        <p class="text-gray-600"><i class="fas fa-calendar-alt mr-2"></i>Periodo: ${course.period}</p>
+                        
+                        <button onclick="selectCourse(${course.id}); navigateTo('students')" 
+                            class="w-full mt-4 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 py-2 rounded-lg transition-colors">
+                            Ver Alumnos
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function Students() {
+            const filteredStudents = state.selectedCourse ? 
+                state.data.students.filter(s => s.courseId === state.selectedCourse) :
+                state.data.students;
+
+            return `
+                <div class="p-6">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+                        <div>
+                            <h2 class="text-2xl font-bold text-gray-800 mb-2">Alumnos</h2>
+                            ${state.selectedCourse ? 
+                                `<p class="text-gray-600">Curso: ${getCourseName(state.selectedCourse)}</p>` : 
+                                '<p class="text-gray-600">Todos los alumnos</p>'
+                            }
+                        </div>
+                        <div class="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2 mt-4 sm:mt-0">
+                            <button onclick="showAddStudentModal()" 
+                                class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors">
+                                <i class="fas fa-plus"></i>
+                                <span>Agregar Alumno</span>
+                            </button>
+                            ${filteredStudents.length > 0 ? 
+                                `<button onclick="exportStudentsToExcel()" 
+                                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors">
+                                    <i class="fas fa-file-excel"></i>
+                                    <span>Exportar</span>
+                                </button>` : ''
+                            }
+                        </div>
+                    </div>
+
+                    ${filteredStudents.length === 0 ? 
+                    `<div class="bg-white rounded-xl shadow-md p-8 text-center">
+                        <i class="fas fa-users text-4xl text-gray-400 mb-4"></i>
+                        <p class="text-gray-600">No hay alumnos registrados</p>
+                        <button onclick="showAddStudentModal()" 
+                            class="mt-4 text-blue-600 hover:text-blue-800 font-medium">
+                            Agregar el primer alumno
+                        </button>
+                    </div>` : 
+                    `<div class="bg-white rounded-xl shadow-md overflow-hidden">
+                        <div class="overflow-x-auto">
+                            <table class="w-full">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Curso</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contacto</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white divide-y divide-gray-200">
+                                    ${filteredStudents.map(student => StudentRow(student)).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>`}
+                </div>
+            `;
+        }
+
+        function StudentRow(student) {
+            const course = state.data.courses.find(c => c.id === student.courseId);
+            return `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0 h-10 w-10">
+                                <div class="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
+                                    <span class="text-blue-600 font-medium">${student.name.charAt(0)}${student.lastName.charAt(0)}</span>
+                                </div>
+                            </div>
+                            <div class="ml-4">
+                                <div class="text-sm font-medium text-gray-900">${student.name} ${student.lastName}</div>
+                                <div class="text-sm text-gray-500">${student.dni}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm text-gray-900">${course ? course.name : 'Sin curso'}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm text-gray-900">${student.phone}</div>
+                        <div class="text-sm text-gray-500">${student.email}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <button onclick="editStudent(${student.id})" class="text-blue-600 hover:text-blue-900 mr-3">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button onclick="deleteStudent(${student.id})" class="text-red-600 hover:text-red-900 mr-3">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                        <button onclick="viewStudentDetails(${student.id})" class="text-green-600 hover:text-green-900">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }
+
+        function Activities() {
+            return `
+                <div class="p-6">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-4 sm:mb-0">Calendario de Actividades</h2>
+                        <button onclick="showAddActivityModal()" 
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors">
+                            <i class="fas fa-plus"></i>
+                            <span>Agregar Actividad</span>
+                        </button>
+                    </div>
+
+                    <div class="bg-white rounded-xl shadow-md p-6 mb-6">
+                        ${Calendar()}
+                    </div>
+
+                    <div class="bg-white rounded-xl shadow-md p-6">
+                        <h3 class="text-lg font-semibold mb-4">Todas las Actividades</h3>
+                        ${AllActivitiesList()}
+                    </div>
+                </div>
+            `;
+        }
+
+        function Calendar() {
+            const current = state.currentDate;
+            const month = current.month;
+            const year = current.year;
+            
+            // Primer día del mes
+            const firstDay = luxon.DateTime.local(year, month, 1);
+            // Día de la semana del primer día (0 = domingo, 1 = lunes, etc.)
+            const startDay = firstDay.weekday === 7 ? 0 : firstDay.weekday;
+            // Último día del mes
+            const lastDay = firstDay.plus({ months: 1 }).minus({ days: 1 });
+            const totalDays = lastDay.day;
+            
+            // Días del mes anterior que deben mostrarse
+            const prevMonthDays = startDay;
+            const prevMonth = month === 1 ? 12 : month - 1;
+            const prevMonthYear = month === 1 ? year - 1 : year;
+            const prevMonthLastDay = luxon.DateTime.local(prevMonthYear, prevMonth, 1).plus({ months: 1 }).minus({ days: 1 }).day;
+            
+            // Días del próximo mes que deben mostrarse
+            const nextMonthDays = 42 - (prevMonthDays + totalDays); // 6 filas x 7 días = 42
+            
+            let calendarHTML = `
+                <div class="flex justify-between items-center mb-4">
+                    <button onclick="prevMonth()" class="p-2 hover:bg-gray-100 rounded-lg">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <h3 class="text-lg font-semibold">${firstDay.toFormat('MMMM yyyy')}</h3>
+                    <button onclick="nextMonth()" class="p-2 hover:bg-gray-100 rounded-lg">
+                        <i class="fas fa-chevron-right"></i>
+                    </button>
+                </div>
+                
+                <div class="grid grid-cols-7 gap-1 text-center">
+                    ${['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map(day => 
+                        `<div class="p-2 font-medium text-gray-600">${day}</div>`
+                    ).join('')}
+            `;
+            
+            // Días del mes anterior
+            for (let i = prevMonthDays; i > 0; i--) {
+                const day = prevMonthLastDay - i + 1;
+                const date = luxon.DateTime.local(prevMonthYear, prevMonth, day);
+                calendarHTML += `<div class="p-2 text-gray-400 text-sm">${day}</div>`;
+            }
+            
+            // Días del mes actual
+            for (let day = 1; day <= totalDays; day++) {
+                const date = luxon.DateTime.local(year, month, day);
+                const dateString = date.toISODate();
+                const dayActivities = state.data.activities.filter(a => a.date === dateString);
+                
+                let dayClass = "p-2 text-sm border rounded-lg min-h-[80px] flex flex-col";
+                if (date.hasSame(luxon.DateTime.now(), 'day')) {
+                    dayClass += " border-blue-500 bg-blue-50";
+                }
+                
+                calendarHTML += `
+                    <div class="${dayClass}">
+                        <div class="font-medium mb-1">${day}</div>
+                        <div class="flex-1 overflow-y-auto">
+                            ${dayActivities.map(activity => `
+                                <div class="event-item ${getActivityColor(activity.type)} mb-1">
+                                    ${activity.title}
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Días del próximo mes
+            for (let day = 1; day <= nextMonthDays; day++) {
+                calendarHTML += `<div class="p-2 text-gray-400 text-sm">${day}</div>`;
+            }
+            
+            calendarHTML += `</div>`;
+            
+            return calendarHTML;
+        }
+
+        function getActivityColor(type) {
+            switch (type) {
+                case 'examen': return 'bg-red-100 text-red-800';
+                case 'tarea': return 'bg-yellow-100 text-yellow-800';
+                case 'clase': return 'bg-blue-100 text-blue-800';
+                case 'evento': return 'bg-green-100 text-green-800';
+                default: return 'bg-gray-100 text-gray-800';
+            }
+        }
+
+        function AllActivitiesList() {
+            const sortedActivities = [...state.data.activities].sort((a, b) => 
+                new Date(b.date) - new Date(a.date)
+            );
+
+            if (sortedActivities.length === 0) {
+                return '<p class="text-gray-500">No hay actividades registradas</p>';
+            }
+
+            return `
+                <div class="space-y-3 max-h-96 overflow-y-auto">
+                    ${sortedActivities.map(activity => {
+                        const date = luxon.DateTime.fromISO(activity.date).toLocaleString(luxon.DateTime.DATE_MED);
+                        const course = state.data.courses.find(c => c.id === activity.courseId);
+                        return `
+                            <div class="flex items-start justify-between p-3 bg-gray-50 rounded-lg">
+                                <div class="flex-1">
+                                    <div class="flex items-center space-x-2 mb-1">
+                                        <span class="px-2 py-1 ${getActivityColor(activity.type)} text-xs rounded-full">
+                                            ${activity.type}
+                                        </span>
+                                        <span class="text-sm text-gray-600">${date}</span>
+                                    </div>
+                                    <p class="font-medium">${activity.title}</p>
+                                    <p class="text-sm text-gray-600">${activity.description}</p>
+                                    ${course ? `<p class="text-sm text-gray-500">Curso: ${course.name}</p>` : ''}
+                                </div>
+                                <div class="flex space-x-2 ml-2">
+                                    <button onclick="editActivity(${activity.id})" class="text-blue-600 hover:text-blue-800">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button onclick="deleteActivity(${activity.id})" class="text-red-600 hover:text-red-800">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        }
+
+        function Attendance() {
+            return `
+                <div class="p-6">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-4 sm:mb-0">Registro de Asistencia</h2>
+                        <div class="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
+                            <select onchange="changePeriod(this.value)" class="border border-gray-300 rounded-lg px-3 py-2">
+                                <option value="day" ${state.selectedPeriod === 'day' ? 'selected' : ''}>Por Día</option>
+                                <option value="week" ${state.selectedPeriod === 'week' ? 'selected' : ''}>Por Semana</option>
+                                <option value="month" ${state.selectedPeriod === 'month' ? 'selected' : ''}>Por Mes</option>
+                                <option value="year" ${state.selectedPeriod === 'year' ? 'selected' : ''}>Por Año</option>
+                            </select>
+                            <button onclick="generateAttendanceSheet()" 
+                                class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors">
+                                <i class="fas fa-file-alt"></i>
+                                <span>Generar Planilla</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    ${renderAttendanceView()}
+                </div>
+            `;
+        }
+
+        function renderAttendanceView() {
+            switch (state.selectedPeriod) {
+                case 'day':
+                    return DayAttendance();
+                case 'week':
+                    return WeekAttendance();
+                case 'month':
+                    return MonthAttendance();
+                case 'year':
+                    return YearAttendance();
+                default:
+                    return DayAttendance();
+            }
+        }
+
+        function DayAttendance() {
+            const today = state.currentDate.toISODate();
+            const students = state.selectedCourse ? 
+                state.data.students.filter(s => s.courseId === state.selectedCourse) :
+                state.data.students;
+            
+            if (students.length === 0) {
+                return `
+                    <div class="bg-white rounded-xl shadow-md p-8 text-center">
+                        <i class="fas fa-users text-4xl text-gray-400 mb-4"></i>
+                        <p class="text-gray-600">No hay alumnos para registrar asistencia</p>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                    <div class="p-4 bg-gray-50 border-b">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-semibold">Asistencia - ${state.currentDate.toFormat('dd/MM/yyyy')}</h3>
+                            <div class="flex space-x-2">
+                                <button onclick="exportAttendanceToPDF()" 
+                                    class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm flex items-center space-x-1">
+                                    <i class="fas fa-file-pdf"></i>
+                                    <span>PDF</span>
+                                </button>
+                                <button onclick="exportAttendanceToWord()" 
+                                    class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm flex items-center space-x-1">
+                                    <i class="fas fa-file-word"></i>
+                                    <span>Word</span>
+                                </button>
+                                <button onclick="shareAttendance()" 
+                                    class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm flex items-center space-x-1">
+                                    <i class="fas fa-share-alt"></i>
+                                    <span>Compartir</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Alumno</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notas</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                ${students.map(student => DayAttendanceRow(student, today)).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        function DayAttendanceRow(student, date) {
+            const attendance = state.data.attendance[date] ? 
+                state.data.attendance[date].find(a => a.studentId === student.id) : null;
+            
+            const status = attendance ? attendance.status : 'none';
+            const notes = attendance ? attendance.notes : '';
+            
+            return `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0 h-10 w-10">
+                                <div class="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
+                                    <span class="text-blue-600 font-medium">${student.name.charAt(0)}${student.lastName.charAt(0)}</span>
+                                </div>
+                            </div>
+                            <div class="ml-4">
+                                <div class="text-sm font-medium text-gray-900">${student.name} ${student.lastName}</div>
+                                <div class="text-sm text-gray-500">${student.dni}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="px-2 py-1 ${getStatusClass(status)} text-xs rounded-full">
+                            ${getStatusText(status)}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4">
+                        <input type="text" value="${notes}" 
+                            onblur="updateAttendanceNotes('${date}', ${student.id}, this.value)"
+                            class="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                            placeholder="Notas...">
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <div class="flex space-x-1">
+                            <button onclick="markAttendance('${date}', ${student.id}, 'present')" 
+                                class="p-1 ${status === 'present' ? 'bg-green-200' : 'bg-gray-100 hover:bg-green-100'} rounded text-green-600">
+                                <i class="fas fa-check"></i>
+                            </button>
+                            <button onclick="markAttendance('${date}', ${student.id}, 'absent')" 
+                                class="p-1 ${status === 'absent' ? 'bg-red-200' : 'bg-gray-100 hover:bg-red-100'} rounded text-red-600">
+                                <i class="fas fa-times"></i>
+                            </button>
+                            <button onclick="markAttendance('${date}', ${student.id}, 'late')" 
+                                class="p-1 ${status === 'late' ? 'bg-yellow-200' : 'bg-gray-100 hover:bg-yellow-100'} rounded text-yellow-600">
+                                <i class="fas fa-clock"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }
+
+        function getStatusClass(status) {
+            switch (status) {
+                case 'present': return 'bg-green-100 text-green-800';
+                case 'absent': return 'bg-red-100 text-red-800';
+                case 'late': return 'bg-yellow-100 text-yellow-600';
+                default: return 'bg-gray-100 text-gray-800';
+            }
+        }
+
+        function getStatusText(status) {
+            switch (status) {
+                case 'present': return 'Presente';
+                case 'absent': return 'Ausente';
+                case 'late': return 'Tarde';
+                default: return 'Sin registro';
+            }
+        }
+
+        function WeekAttendance() {
+            const weekStart = state.currentDate.startOf('week');
+            const weekEnd = state.currentDate.endOf('week');
+            const students = state.selectedCourse ? 
+                state.data.students.filter(s => s.courseId === state.selectedCourse) :
+                state.data.students;
+            
+            if (students.length === 0) {
+                return `
+                    <div class="bg-white rounded-xl shadow-md p-8 text-center">
+                        <i class="fas fa-users text-4xl text-gray-400 mb-4"></i>
+                        <p class="text-gray-600">No hay alumnos para registrar asistencia</p>
+                    </div>
+                `;
+            }
+
+            const days = [];
+            let current = weekStart;
+            while (current <= weekEnd) {
+                days.push(current.toISODate());
+                current = current.plus({ days: 1 });
+            }
+
+            return `
+                <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                    <div class="p-4 bg-gray-50 border-b">
+                        <h3 class="text-lg font-semibold">
+                            Asistencia Semanal - ${weekStart.toFormat('dd/MM')} al ${weekEnd.toFormat('dd/MM/yyyy')}
+                        </h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Alumno</th>
+                                    ${days.map(date => {
+                                        const day = luxon.DateTime.fromISO(date);
+                                        return `<th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            ${day.toFormat('EEE')}<br>${day.toFormat('dd/MM')}
+                                        </th>`;
+                                    }).join('')}
+                                    <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                ${students.map(student => WeekAttendanceRow(student, days)).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        function WeekAttendanceRow(student, days) {
+            const attendanceRecords = days.map(date => {
+                const dayAttendance = state.data.attendance[date] ? 
+                    state.data.attendance[date].find(a => a.studentId === student.id) : null;
+                return dayAttendance ? dayAttendance.status : 'none';
+            });
+
+            const presentCount = attendanceRecords.filter(r => r === 'present').length;
+            const totalCount = attendanceRecords.filter(r => r !== 'none').length;
+
+            return `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm font-medium text-gray-900">${student.name} ${student.lastName}</div>
+                    </td>
+                    ${attendanceRecords.map(status => `
+                        <td class="px-6 py-4 text-center">
+                            <span class="px-2 py-1 ${getStatusClass(status)} text-xs rounded-full">
+                                ${getStatusInitial(status)}
+                            </span>
+                        </td>
+                    `).join('')}
+                    <td class="px-6 py-4 text-center font-medium">
+                        ${presentCount}/${totalCount}
+                    </td>
+                </tr>
+            `;
+        }
+
+        function getStatusInitial(status) {
+            switch (status) {
+                case 'present': return 'P';
+                case 'absent': return 'A';
+                case 'late': return 'T';
+                default: return '-';
+            }
+        }
+
+        function MonthAttendance() {
+            const month = state.currentDate.month;
+            const year = state.currentDate.year;
+            const firstDay = luxon.DateTime.local(year, month, 1);
+            const lastDay = firstDay.plus({ months: 1 }).minus({ days: 1 });
+            const totalDays = lastDay.day;
+            
+            const students = state.selectedCourse ? 
+                state.data.students.filter(s => s.courseId === state.selectedCourse) :
+                state.data.students;
+            
+            if (students.length === 0) {
+                return `
+                    <div class="bg-white rounded-xl shadow-md p-8 text-center">
+                        <i class="fas fa-users text-4xl text-gray-400 mb-4"></i>
+                        <p class="text-gray-600">No hay alumnos para registrar asistencia</p>
+                    </div>
+                `;
+            }
+
+            const days = Array.from({ length: totalDays }, (_, i) => 
+                luxon.DateTime.local(year, month, i + 1).toISODate()
+            );
+
+            return `
+                <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                    <div class="p-4 bg-gray-50 border-b">
+                        <h3 class="text-lg font-semibold">Asistencia Mensual - ${firstDay.toFormat('MMMM yyyy')}</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Alumno</th>
+                                    ${days.map(date => {
+                                        const day = luxon.DateTime.fromISO(date);
+                                        return `<th class="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-8">
+                                            ${day.toFormat('dd')}
+                                        </th>`;
+                                    }).join('')}
+                                    <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                ${students.map(student => MonthAttendanceRow(student, days)).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        function MonthAttendanceRow(student, days) {
+            const attendanceRecords = days.map(date => {
+                const dayAttendance = state.data.attendance[date] ? 
+                    state.data.attendance[date].find(a => a.studentId === student.id) : null;
+                return dayAttendance ? dayAttendance.status : 'none';
+            });
+
+            const presentCount = attendanceRecords.filter(r => r === 'present').length;
+            const totalCount = attendanceRecords.filter(r => r !== 'none').length;
+
+            return `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm font-medium text-gray-900">${student.name} ${student.lastName}</div>
+                    </td>
+                    ${attendanceRecords.map(status => `
+                        <td class="px-2 py-1 text-center">
+                            <span class="inline-block w-4 h-4 rounded-full ${getStatusDotClass(status)}"></span>
+                        </td>
+                    `).join('')}
+                    <td class="px-6 py-4 text-center font-medium">
+                        ${presentCount}/${totalCount}
+                    </td>
+                </tr>
+            `;
+        }
+
+        function getStatusDotClass(status) {
+            switch (status) {
+                case 'present': return 'bg-green-500';
+                case 'absent': return 'bg-red-500';
+                case 'late': return 'bg-yellow-500';
+                default: return 'bg-gray-300';
+            }
+        }
+
+        function YearAttendance() {
+            const year = state.currentDate.year;
+            const students = state.selectedCourse ? 
+                state.data.students.filter(s => s.courseId === state.selectedCourse) :
+                state.data.students;
+            
+            if (students.length === 0) {
+                return `
+                    <div class="bg-white rounded-xl shadow-md p-8 text-center">
+                        <i class="fas fa-users text-4xl text-gray-400 mb-4"></i>
+                        <p class="text-gray-600">No hay alumnos para registrar asistencia</p>
+                    </div>
+                `;
+            }
+
+            const months = Array.from({ length: 12 }, (_, i) => i + 1);
+
+            return `
+                <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                    <div class="p-4 bg-gray-50 border-b">
+                        <h3 class="text-lg font-semibold">Asistencia Anual - ${year}</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Alumno</th>
+                                    ${months.map(month => {
+                                        const monthName = luxon.DateTime.local(year, month, 1).toFormat('MMM');
+                                        return `<th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            ${monthName}
+                                        </th>`;
+                                    }).join('')}
+                                    <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                ${students.map(student => YearAttendanceRow(student, year)).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        function YearAttendanceRow(student, year) {
+            const monthlyData = Array.from({ length: 12 }, (_, i) => {
+                const month = i + 1;
+                const firstDay = luxon.DateTime.local(year, month, 1);
+                const lastDay = firstDay.plus({ months: 1 }).minus({ days: 1 });
+                const days = Array.from({ length: lastDay.day }, (_, d) => 
+                    luxon.DateTime.local(year, month, d + 1).toISODate()
+                );
+                
+                const monthAttendance = days.map(date => {
+                    const dayAttendance = state.data.attendance[date] ? 
+                        state.data.attendance[date].find(a => a.studentId === student.id) : null;
+                    return dayAttendance ? dayAttendance.status : 'none';
+                });
+                
+                const presentCount = monthAttendance.filter(r => r === 'present').length;
+                const totalCount = monthAttendance.filter(r => r !== 'none').length;
+                
+                return { present: presentCount, total: totalCount };
+            });
+
+            const totalPresent = monthlyData.reduce((sum, m) => sum + m.present, 0);
+            const totalRecorded = monthlyData.reduce((sum, m) => sum + m.total, 0);
+
+            return `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm font-medium text-gray-900">${student.name} ${student.lastName}</div>
+                    </td>
+                    ${monthlyData.map(data => `
+                        <td class="px-6 py-4 text-center">
+                            <div class="text-xs">${data.present}/${data.total}</div>
+                        </td>
+                    `).join('')}
+                    <td class="px-6 py-4 text-center font-medium">
+                        ${totalPresent}/${totalRecorded}
+                    </td>
+                </tr>
+            `;
+        }
+
+        // Modal functions
+        function showAddInstitutionModal() {
+            const modal = `
+                <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-xl p-6 w-full max-w-md mx-4 max-h-90vh overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-bold">Agregar Institución</h3>
+                            <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <form onsubmit="addInstitution(event)">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+                                    <input type="text" id="institutionName" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
+                                    <input type="text" id="institutionAddress" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                                    <input type="tel" id="institutionPhone" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Correo</label>
+                                    <input type="email" id="institutionEmail" 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                            </div>
+                            <div class="flex space-x-3 mt-6">
+                                <button type="button" onclick="closeModal()" 
+                                    class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                                    Cancelar
+                                </button>
+                                <button type="submit" 
+                                    class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                    Guardar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modal);
+        }
+
+        function showAddCourseModal() {
+            const institutions = state.data.institutions;
+            if (institutions.length === 0) {
+                alert('Primero debe agregar al menos una institución');
+                return;
+            }
+
+            const modal = `
+                <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-xl p-6 w-full max-w-md mx-4 max-h-90vh overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-bold">Agregar Curso</h3>
+                            <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <form onsubmit="addCourse(event)">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+                                    <input type="text" id="courseName" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Institución</label>
+                                    <select id="courseInstitution" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                        ${institutions.map(inst => 
+                                            `<option value="${inst.id}">${inst.name}</option>`
+                                        ).join('')}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Periodo Académico</label>
+                                    <select id="coursePeriod" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                        <option value="cuatrimestre">Cuatrimestre</option>
+                                        <option value="trimestre">Trimestre</option>
+                                        <option value="semestre">Semestre</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
+                                    <textarea id="courseDescription" rows="3"
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"></textarea>
+                                </div>
+                            </div>
+                            <div class="flex space-x-3 mt-6">
+                                <button type="button" onclick="closeModal()" 
+                                    class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                                    Cancelar
+                                </button>
+                                <button type="submit" 
+                                    class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                    Guardar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modal);
+        }
+
+        function showAddStudentModal() {
+            const courses = state.data.courses;
+            if (courses.length === 0) {
+                alert('Primero debe agregar al menos un curso');
+                return;
+            }
+
+            const modal = `
+                <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-xl p-6 w-full max-w-md mx-4 max-h-90vh overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-bold">Agregar Alumno</h3>
+                            <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <form onsubmit="addStudent(event)">
+                            <div class="space-y-4">
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+                                        <input type="text" id="studentName" required 
+                                            class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">Apellido</label>
+                                        <input type="text" id="studentLastName" required 
+                                            class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">DNI</label>
+                                    <input type="text" id="studentDni" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Curso</label>
+                                    <select id="studentCourse" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                        ${courses.map(course => 
+                                            `<option value="${course.id}">${course.name}</option>`
+                                        ).join('')}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                                    <input type="tel" id="studentPhone" 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Correo</label>
+                                    <input type="email" id="studentEmail" 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Notas Personalizadas</label>
+                                    <textarea id="studentNotes" rows="2"
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        placeholder="Notas adicionales sobre el alumno..."></textarea>
+                                </div>
+                            </div>
+                            <div class="flex space-x-3 mt-6">
+                                <button type="button" onclick="closeModal()" 
+                                    class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                                    Cancelar
+                                </button>
+                                <button type="submit" 
+                                    class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                    Guardar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modal);
+        }
+
+        function showAddActivityModal() {
+            const courses = state.data.courses;
+            if (courses.length === 0) {
+                alert('Primero debe agregar al menos un curso');
+                return;
+            }
+
+            const modal = `
+                <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-xl p-6 w-full max-w-md mx-4 max-h-90vh overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-bold">Agregar Actividad</h3>
+                            <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <form onsubmit="addActivity(event)">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Título</label>
+                                    <input type="text" id="activityTitle" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
+                                    <select id="activityType" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                        <option value="examen">Examen</option>
+                                        <option value="tarea">Tarea</option>
+                                        <option value="clase">Clase</option>
+                                        <option value="evento">Evento</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Curso</label>
+                                    <select id="activityCourse" 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                        <option value="">Todos los cursos</option>
+                                        ${courses.map(course => 
+                                            `<option value="${course.id}">${course.name}</option>`
+                                        ).join('')}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Fecha</label>
+                                    <input type="date" id="activityDate" required 
+                                        value="${state.currentDate.toISODate()}"
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
+                                    <textarea id="activityDescription" rows="3"
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"></textarea>
+                                </div>
+                            </div>
+                            <div class="flex space-x-3 mt-6">
+                                <button type="button" onclick="closeModal()" 
+                                    class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                                    Cancelar
+                                </button>
+                                <button type="submit" 
+                                    class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                    Guardar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modal);
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('modal');
+            if (modal) {
+                modal.remove();
+            }
+        }
+
+        // App functions
+        function navigateTo(view) {
+            state.currentView = view;
+            state.selectedInstitution = null;
+            state.selectedCourse = null;
+            state.selectedStudent = null;
+            render();
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar.classList.contains('sidebar-expanded')) {
+                sidebar.classList.remove('sidebar-expanded');
+                sidebar.classList.add('sidebar-collapsed');
+            } else {
+                sidebar.classList.remove('sidebar-collapsed');
+                sidebar.classList.add('sidebar-expanded');
+            }
+        }
+
+        function prevMonth() {
+            state.currentDate = state.currentDate.minus({ months: 1 });
+            render();
+        }
+
+        function nextMonth() {
+            state.currentDate = state.currentDate.plus({ months: 1 });
+            render();
+        }
+
+        function changePeriod(period) {
+            state.selectedPeriod = period;
+            render();
+        }
+
+        function selectCourse(courseId) {
+            state.selectedCourse = courseId;
+        }
+
+        function getCourseName(courseId) {
+            const course = state.data.courses.find(c => c.id === courseId);
+            return course ? course.name : 'Curso no encontrado';
+        }
+
+        function generateAttendanceSheet() {
+            alert('Planilla generada exitosamente. Puede exportarla en PDF, Word o Excel.');
+        }
+
+        function exportAttendanceToPDF() {
+            alert('Exportando asistencia a PDF...');
+            // En una implementación real, usaría pdfmake para generar el PDF
+        }
+
+        function exportAttendanceToWord() {
+            alert('Exportando asistencia a Word...');
+            // En una implementación real, usaría una librería para generar documentos Word
+        }
+
+        function shareAttendance() {
+            alert('Compartiendo planilla de asistencia...');
+            // En una implementación real, usaría la API de compartir del navegador
+        }
+
+        function updateAttendanceNotes(date, studentId, notes) {
+            if (!state.data.attendance[date]) {
+                state.data.attendance[date] = [];
+            }
+            
+            const attendanceIndex = state.data.attendance[date].findIndex(a => a.studentId === studentId);
+            if (attendanceIndex >= 0) {
+                state.data.attendance[date][attendanceIndex].notes = notes;
+            } else {
+                state.data.attendance[date].push({
+                    studentId: studentId,
+                    status: 'none',
+                    notes: notes
+                });
+            }
+            
+            saveData();
+            render();
+        }
+
+        function markAttendance(date, studentId, status) {
+            if (!state.data.attendance[date]) {
+                state.data.attendance[date] = [];
+            }
+            
+            const attendanceIndex = state.data.attendance[date].findIndex(a => a.studentId === studentId);
+            if (attendanceIndex >= 0) {
+                state.data.attendance[date][attendanceIndex].status = status;
+            } else {
+                state.data.attendance[date].push({
+                    studentId: studentId,
+                    status: status,
+                    notes: ''
+                });
+            }
+            
+            saveData();
+            render();
+        }
+
+        // CRUD operations
+        function addInstitution(event) {
+            event.preventDefault();
+            const name = document.getElementById('institutionName').value;
+            const address = document.getElementById('institutionAddress').value;
+            const phone = document.getElementById('institutionPhone').value;
+            const email = document.getElementById('institutionEmail').value;
+            
+            const newInstitution = {
+                id: Date.now(),
+                name,
+                address,
+                phone,
+                email
+            };
+            
+            state.data.institutions.push(newInstitution);
+            saveData();
+            closeModal();
+            render();
+        }
+
+        function editInstitution(id) {
+            const institution = state.data.institutions.find(i => i.id === id);
+            if (!institution) return;
+            
+            const modal = `
+                <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-xl p-6 w-full max-w-md mx-4 max-h-90vh overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-bold">Editar Institución</h3>
+                            <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <form onsubmit="updateInstitution(event, ${id})">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+                                    <input type="text" id="institutionName" value="${institution.name}" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
+                                    <input type="text" id="institutionAddress" value="${institution.address}" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                                    <input type="tel" id="institutionPhone" value="${institution.phone}" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Correo</label>
+                                    <input type="email" id="institutionEmail" value="${institution.email || ''}" 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                            </div>
+                            <div class="flex space-x-3 mt-6">
+                                <button type="button" onclick="closeModal()" 
+                                    class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                                    Cancelar
+                                </button>
+                                <button type="submit" 
+                                    class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                    Guardar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modal);
+        }
+
+        function updateInstitution(event, id) {
+            event.preventDefault();
+            const name = document.getElementById('institutionName').value;
+            const address = document.getElementById('institutionAddress').value;
+            const phone = document.getElementById('institutionPhone').value;
+            const email = document.getElementById('institutionEmail').value;
+            
+            const institutionIndex = state.data.institutions.findIndex(i => i.id === id);
+            if (institutionIndex >= 0) {
+                state.data.institutions[institutionIndex] = {
+                    id,
+                    name,
+                    address,
+                    phone,
+                    email
+                };
+            }
+            
+            saveData();
+            closeModal();
+            render();
+        }
+
+        function deleteInstitution(id) {
+            if (confirm('¿Está seguro de que desea eliminar esta institución?')) {
+                state.data.institutions = state.data.institutions.filter(i => i.id !== id);
+                // También eliminar cursos y alumnos asociados
+                const courseIds = state.data.courses
+                    .filter(c => c.institutionId === id)
+                    .map(c => c.id);
+                
+                state.data.courses = state.data.courses.filter(c => c.institutionId !== id);
+                state.data.students = state.data.students.filter(s => !courseIds.includes(s.courseId));
+                
+                saveData();
+                render();
+            }
+        }
+
+        function addCourse(event) {
+            event.preventDefault();
+            const name = document.getElementById('courseName').value;
+            const institutionId = parseInt(document.getElementById('courseInstitution').value);
+            const period = document.getElementById('coursePeriod').value;
+            const description = document.getElementById('courseDescription').value;
+            
+            const newCourse = {
+                id: Date.now(),
+                name,
+                institutionId,
+                period,
+                description
+            };
+            
+            state.data.courses.push(newCourse);
+            saveData();
+            closeModal();
+            render();
+        }
+
+        function editCourse(id) {
+            const course = state.data.courses.find(c => c.id === id);
+            const institutions = state.data.institutions;
+            if (!course || institutions.length === 0) return;
+            
+            const modal = `
+                <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-xl p-6 w-full max-w-md mx-4 max-h-90vh overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-bold">Editar Curso</h3>
+                            <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <form onsubmit="updateCourse(event, ${id})">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+                                    <input type="text" id="courseName" value="${course.name}" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Institución</label>
+                                    <select id="courseInstitution" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                        ${institutions.map(inst => 
+                                            `<option value="${inst.id}" ${inst.id === course.institutionId ? 'selected' : ''}>${inst.name}</option>`
+                                        ).join('')}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Periodo Académico</label>
+                                    <select id="coursePeriod" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                        <option value="cuatrimestre" ${course.period === 'cuatrimestre' ? 'selected' : ''}>Cuatrimestre</option>
+                                        <option value="trimestre" ${course.period === 'trimestre' ? 'selected' : ''}>Trimestre</option>
+                                        <option value="semestre" ${course.period === 'semestre' ? 'selected' : ''}>Semestre</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
+                                    <textarea id="courseDescription" rows="3"
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">${course.description || ''}</textarea>
+                                </div>
+                            </div>
+                            <div class="flex space-x-3 mt-6">
+                                <button type="button" onclick="closeModal()" 
+                                    class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                                    Cancelar
+                                </button>
+                                <button type="submit" 
+                                    class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                    Guardar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modal);
+        }
+
+        function updateCourse(event, id) {
+            event.preventDefault();
+            const name = document.getElementById('courseName').value;
+            const institutionId = parseInt(document.getElementById('courseInstitution').value);
+            const period = document.getElementById('coursePeriod').value;
+            const description = document.getElementById('courseDescription').value;
+            
+            const courseIndex = state.data.courses.findIndex(c => c.id === id);
+            if (courseIndex >= 0) {
+                state.data.courses[courseIndex] = {
+                    id,
+                    name,
+                    institutionId,
+                    period,
+                    description
+                };
+            }
+            
+            saveData();
+            closeModal();
+            render();
+        }
+
+        function deleteCourse(id) {
+            if (confirm('¿Está seguro de que desea eliminar este curso?')) {
+                state.data.courses = state.data.courses.filter(c => c.id !== id);
+                // También eliminar alumnos asociados
+                state.data.students = state.data.students.filter(s => s.courseId !== id);
+                // Y actividades asociadas
+                state.data.activities = state.data.activities.filter(a => a.courseId !== id);
+                
+                saveData();
+                render();
+            }
+        }
+
+        function addStudent(event) {
+            event.preventDefault();
+            const name = document.getElementById('studentName').value;
+            const lastName = document.getElementById('studentLastName').value;
+            const dni = document.getElementById('studentDni').value;
+            const courseId = parseInt(document.getElementById('studentCourse').value);
+            const phone = document.getElementById('studentPhone').value;
+            const email = document.getElementById('studentEmail').value;
+            const notes = document.getElementById('studentNotes').value;
+            
+            const newStudent = {
+                id: Date.now(),
+                name,
+                lastName,
+                dni,
+                courseId,
+                phone,
+                email,
+                notes
+            };
+            
+            state.data.students.push(newStudent);
+            saveData();
+            closeModal();
+            render();
+        }
+
+        function editStudent(id) {
+            const student = state.data.students.find(s => s.id === id);
+            const courses = state.data.courses;
+            if (!student || courses.length === 0) return;
+            
+            const modal = `
+                <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-xl p-6 w-full max-w-md mx-4 max-h-90vh overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-bold">Editar Alumno</h3>
+                            <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <form onsubmit="updateStudent(event, ${id})">
+                            <div class="space-y-4">
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+                                        <input type="text" id="studentName" value="${student.name}" required 
+                                            class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">Apellido</label>
+                                        <input type="text" id="studentLastName" value="${student.lastName}" required 
+                                            class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">DNI</label>
+                                    <input type="text" id="studentDni" value="${student.dni}" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Curso</label>
+                                    <select id="studentCourse" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                        ${courses.map(course => 
+                                            `<option value="${course.id}" ${course.id === student.courseId ? 'selected' : ''}>${course.name}</option>`
+                                        ).join('')}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                                    <input type="tel" id="studentPhone" value="${student.phone || ''}" 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Correo</label>
+                                    <input type="email" id="studentEmail" value="${student.email || ''}" 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Notas Personalizadas</label>
+                                    <textarea id="studentNotes" rows="2"
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        placeholder="Notas adicionales sobre el alumno...">${student.notes || ''}</textarea>
+                                </div>
+                            </div>
+                            <div class="flex space-x-3 mt-6">
+                                <button type="button" onclick="closeModal()" 
+                                    class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                                    Cancelar
+                                </button>
+                                <button type="submit" 
+                                    class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                    Guardar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modal);
+        }
+
+        function updateStudent(event, id) {
+            event.preventDefault();
+            const name = document.getElementById('studentName').value;
+            const lastName = document.getElementById('studentLastName').value;
+            const dni = document.getElementById('studentDni').value;
+            const courseId = parseInt(document.getElementById('studentCourse').value);
+            const phone = document.getElementById('studentPhone').value;
+            const email = document.getElementById('studentEmail').value;
+            const notes = document.getElementById('studentNotes').value;
+            
+            const studentIndex = state.data.students.findIndex(s => s.id === id);
+            if (studentIndex >= 0) {
+                state.data.students[studentIndex] = {
+                    id,
+                    name,
+                    lastName,
+                    dni,
+                    courseId,
+                    phone,
+                    email,
+                    notes
+                };
+            }
+            
+            saveData();
+            closeModal();
+            render();
+        }
+
+        function deleteStudent(id) {
+            if (confirm('¿Está seguro de que desea eliminar este alumno?')) {
+                state.data.students = state.data.students.filter(s => s.id !== id);
+                // También eliminar registros de asistencia
+                Object.keys(state.data.attendance).forEach(date => {
+                    state.data.attendance[date] = state.data.attendance[date].filter(a => a.studentId !== id);
+                    if (state.data.attendance[date].length === 0) {
+                        delete state.data.attendance[date];
+                    }
+                });
+                
+                saveData();
+                render();
+            }
+        }
+
+        function addActivity(event) {
+            event.preventDefault();
+            const title = document.getElementById('activityTitle').value;
+            const type = document.getElementById('activityType').value;
+            const courseId = document.getElementById('activityCourse').value ? 
+                parseInt(document.getElementById('activityCourse').value) : null;
+            const date = document.getElementById('activityDate').value;
+            const description = document.getElementById('activityDescription').value;
+            
+            const newActivity = {
+                id: Date.now(),
+                title,
+                type,
+                courseId,
+                date,
+                description
+            };
+            
+            state.data.activities.push(newActivity);
+            saveData();
+            closeModal();
+            render();
+        }
+
+        function editActivity(id) {
+            const activity = state.data.activities.find(a => a.id === id);
+            const courses = state.data.courses;
+            if (!activity) return;
+            
+            const modal = `
+                <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-xl p-6 w-full max-w-md mx-4 max-h-90vh overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-bold">Editar Actividad</h3>
+                            <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <form onsubmit="updateActivity(event, ${id})">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Título</label>
+                                    <input type="text" id="activityTitle" value="${activity.title}" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
+                                    <select id="activityType" required 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                        <option value="examen" ${activity.type === 'examen' ? 'selected' : ''}>Examen</option>
+                                        <option value="tarea" ${activity.type === 'tarea' ? 'selected' : ''}>Tarea</option>
+                                        <option value="clase" ${activity.type === 'clase' ? 'selected' : ''}>Clase</option>
+                                        <option value="evento" ${activity.type === 'evento' ? 'selected' : ''}>Evento</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Curso</label>
+                                    <select id="activityCourse" 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                        <option value="" ${!activity.courseId ? 'selected' : ''}>Todos los cursos</option>
+                                        ${courses.map(course => 
+                                            `<option value="${course.id}" ${activity.courseId === course.id ? 'selected' : ''}>${course.name}</option>`
+                                        ).join('')}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Fecha</label>
+                                    <input type="date" id="activityDate" required 
+                                        value="${activity.date}"
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
+                                    <textarea id="activityDescription" rows="3"
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent">${activity.description || ''}</textarea>
+                                </div>
+                            </div>
+                            <div class="flex space-x-3 mt-6">
+                                <button type="button" onclick="closeModal()" 
+                                    class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                                    Cancelar
+                                </button>
+                                <button type="submit" 
+                                    class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                    Guardar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modal);
+        }
+
+        function updateActivity(event, id) {
+            event.preventDefault();
+            const title = document.getElementById('activityTitle').value;
+            const type = document.getElementById('activityType').value;
+            const courseId = document.getElementById('activityCourse').value ? 
+                parseInt(document.getElementById('activityCourse').value) : null;
+            const date = document.getElementById('activityDate').value;
+            const description = document.getElementById('activityDescription').value;
+            
+            const activityIndex = state.data.activities.findIndex(a => a.id === id);
+            if (activityIndex >= 0) {
+                state.data.activities[activityIndex] = {
+                    id,
+                    title,
+                    type,
+                    courseId,
+                    date,
+                    description
+                };
+            }
+            
+            saveData();
+            closeModal();
+            render();
+        }
+
+        function deleteActivity(id) {
+            if (confirm('¿Está seguro de que desea eliminar esta actividad?')) {
+                state.data.activities = state.data.activities.filter(a => a.id !== id);
+                saveData();
+                render();
+            }
+        }
+
+        function viewStudentDetails(id) {
+            const student = state.data.students.find(s => s.id === id);
+            const course = state.data.courses.find(c => c.id === student.courseId);
+            const institution = course ? state.data.institutions.find(i => i.id === course.institutionId) : null;
+            
+            if (!student) return;
+            
+            const modal = `
+                <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-xl p-6 w-full max-w-md mx-4 max-h-90vh overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-bold">Detalles del Alumno</h3>
+                            <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div class="space-y-4">
+                            <div class="text-center">
+                                <div class="h-20 w-20 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-4">
+                                    <span class="text-blue-600 text-2xl font-medium">${student.name.charAt(0)}${student.lastName.charAt(0)}</span>
+                                </div>
+                                <h4 class="text-lg font-semibold">${student.name} ${student.lastName}</h4>
+                                <p class="text-gray-600">${student.dni}</p>
+                            </div>
+                            
+                            <div class="border-t pt-4">
+                                <h5 class="font-medium mb-3">Información Académica</h5>
+                                <div class="space-y-2 text-sm">
+                                    <div class="flex justify-between">
+                                        <span class="text-gray-600">Curso:</span>
+                                        <span class="font-medium">${course ? course.name : 'Sin curso'}</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-gray-600">Institución:</span>
+                                        <span class="font-medium">${institution ? institution.name : 'Sin institución'}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="border-t pt-4">
+                                <h5 class="font-medium mb-3">Contacto</h5>
+                                <div class="space-y-2 text-sm">
+                                    ${student.phone ? `<div class="flex justify-between">
+                                        <span class="text-gray-600">Teléfono:</span>
+                                        <span class="font-medium">${student.phone}</span>
+                                    </div>` : ''}
+                                    ${student.email ? `<div class="flex justify-between">
+                                        <span class="text-gray-600">Correo:</span>
+                                        <span class="font-medium">${student.email}</span>
+                                    </div>` : ''}
+                                </div>
+                            </div>
+                            
+                            ${student.notes ? `<div class="border-t pt-4">
+                                <h5 class="font-medium mb-3">Notas Personalizadas</h5>
+                                <p class="text-sm text-gray-700">${student.notes}</p>
+                            </div>` : ''}
+                            
+                            <div class="border-t pt-4">
+                                <h5 class="font-medium mb-3">Asistencia Reciente</h5>
+                                ${getRecentAttendance(student.id)}
+                            </div>
+                        </div>
+                        <div class="flex justify-end mt-6">
+                            <button onclick="closeModal()" 
+                                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                Cerrar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modal);
+        }
+
+        function getRecentAttendance(studentId) {
+            const today = luxon.DateTime.now();
+            const weekAgo = today.minus({ days: 7 });
+            const recentDays = [];
+            let current = today;
+            
+            for (let i = 0; i < 7; i++) {
+                recentDays.push(current.toISODate());
+                current = current.minus({ days: 1 });
+            }
+            
+            const attendanceList = recentDays.map(date => {
+                const dayAttendance = state.data.attendance[date] ? 
+                    state.data.attendance[date].find(a => a.studentId === studentId) : null;
+                const status = dayAttendance ? dayAttendance.status : 'none';
+                const day = luxon.DateTime.fromISO(date).toFormat('EEE dd/MM');
+                
+                return `
+                    <div class="flex justify-between items-center py-1 border-b border-gray-100 last:border-0">
+                        <span class="text-xs">${day}</span>
+                        <span class="px-2 py-1 ${getStatusClass(status)} text-xs rounded-full">
+                            ${getStatusText(status)}
+                        </span>
+                    </div>
+                `;
+            }).join('');
+            
+            return `<div class="space-y-1">${attendanceList}</div>`;
+        }
+
+        function exportStudentsToExcel() {
+            if (state.data.students.length === 0) {
+                alert('No hay alumnos para exportar');
+                return;
+            }
+            
+            const data = state.data.students.map(student => {
+                const course = state.data.courses.find(c => c.id === student.courseId);
+                const institution = course ? state.data.institutions.find(i => i.id === course.institutionId) : null;
+                
+                return {
+                    'Nombre': student.name,
+                    'Apellido': student.lastName,
+                    'DNI': student.dni,
+                    'Curso': course ? course.name : '',
+                    'Institución': institution ? institution.name : '',
+                    'Teléfono': student.phone || '',
+                    'Correo': student.email || '',
+                    'Notas': student.notes || ''
+                };
+            });
+            
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Alumnos");
+            XLSX.writeFile(wb, `alumnos_${new Date().toISOString().split('T')[0]}.xlsx`);
+        }
+
+        // Render function
+        function render() {
+            const app = document.getElementById('app');
+            app.innerHTML = `
+                ${Header()}
+                <div class="flex">
+                    ${Sidebar()}
+                    <main class="flex-1 md:ml-64 min-h-screen">
+                        ${renderContent()}
+                    </main>
+                </div>
+            `;
+        }
+
+        function renderContent() {
+            switch (state.currentView) {
+                case 'dashboard': return Dashboard();
+                case 'institutions': return Institutions();
+                case 'courses': return Courses();
+                case 'students': return Students();
+                case 'activities': return Activities();
+                case 'attendance': return Attendance();
+                default: return Dashboard();
+            }
+        }
+
+        // Inicialización
+        loadData();
+        render();
+    </script>
+</body>
+</html>
+```
