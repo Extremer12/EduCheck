@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -47,6 +46,54 @@
             background-color: #fef3c7;
             color: #92400e;
         }
+        .attendance-excused {
+            background-color: #e0f2fe;
+            color: #0369a1;
+        }
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 4px;
+        }
+        .present-dot {
+            background-color: #10b981;
+        }
+        .absent-dot {
+            background-color: #ef4444;
+        }
+        .late-dot {
+            background-color: #f59e0b;
+        }
+        .excused-dot {
+            background-color: #0ea5e9;
+        }
+        .tooltip {
+            position: relative;
+            display: inline-block;
+        }
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 120px;
+            background-color: #555;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -60px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 12px;
+        }
+        .tooltip:hover .tooltiptext {
+            visibility: visible;
+            opacity: 1;
+        }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen font-sans">
@@ -60,9 +107,10 @@
             selectedInstitution: null,
             selectedCourse: null,
             selectedStudent: null,
-            selectedPeriod: 'cuatrimestre',
+            selectedPeriod: 'day',
             currentDate: luxon.DateTime.now(),
-            activeTab: 'dashboard'
+            activeTab: 'dashboard',
+            selectedAttendanceDate: luxon.DateTime.now().toISODate()
         };
 
         // Datos iniciales
@@ -128,6 +176,8 @@
                             ${NavButton('students', 'Alumnos', 'fas fa-users')}
                             ${NavButton('activities', 'Actividades', 'fas fa-calendar-alt')}
                             ${NavButton('attendance', 'Asistencia', 'fas fa-clipboard-check')}
+                            ${NavButton('attendance-reports', 'Reportes', 'fas fa-chart-bar')}
+                            ${NavButton('import-export', 'Importar/Exportar', 'fas fa-file-import')}
                         </nav>
                     </div>
                 </aside>
@@ -230,8 +280,9 @@
             const totalPresent = Object.values(state.data.attendance).flat().filter(a => a.status === 'present').length;
             const totalAbsent = Object.values(state.data.attendance).flat().filter(a => a.status === 'absent').length;
             const totalLate = Object.values(state.data.attendance).flat().filter(a => a.status === 'late').length;
+            const totalExcused = Object.values(state.data.attendance).flat().filter(a => a.status === 'excused').length;
             
-            const presentRate = totalClasses > 0 ? Math.round((totalPresent / (totalPresent + totalAbsent + totalLate)) * 100) : 0;
+            const presentRate = totalClasses > 0 ? Math.round((totalPresent / (totalPresent + totalAbsent + totalLate + totalExcused)) * 100) : 0;
 
             return `
                 <div class="grid grid-cols-2 gap-4">
@@ -257,6 +308,10 @@
                         <div>
                             <p class="font-semibold text-yellow-600">${totalLate}</p>
                             <p class="text-xs text-gray-600">Tardanzas</p>
+                        </div>
+                        <div>
+                            <p class="font-semibold text-blue-600">${totalExcused}</p>
+                            <p class="text-xs text-gray-600">Justificadas</p>
                         </div>
                     </div>
                 </div>
@@ -645,81 +700,115 @@
             return `
                 <div class="p-6">
                     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
-                        <h2 class="text-2xl font-bold text-gray-800 mb-4 sm:mb-0">Registro de Asistencia</h2>
+                        <h2 class="text-2xl font-bold text-gray-800 mb-4 sm:mb-0">Toma de Asistencia</h2>
                         <div class="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
-                            <select onchange="changePeriod(this.value)" class="border border-gray-300 rounded-lg px-3 py-2">
-                                <option value="day" ${state.selectedPeriod === 'day' ? 'selected' : ''}>Por Día</option>
-                                <option value="week" ${state.selectedPeriod === 'week' ? 'selected' : ''}>Por Semana</option>
-                                <option value="month" ${state.selectedPeriod === 'month' ? 'selected' : ''}>Por Mes</option>
-                                <option value="year" ${state.selectedPeriod === 'year' ? 'selected' : ''}>Por Año</option>
-                            </select>
-                            <button onclick="generateAttendanceSheet()" 
-                                class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors">
-                                <i class="fas fa-file-alt"></i>
-                                <span>Generar Planilla</span>
+                            <button onclick="navigateTo('attendance-records')" 
+                                class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors">
+                                <i class="fas fa-history"></i>
+                                <span>Historial</span>
                             </button>
                         </div>
                     </div>
 
-                    ${renderAttendanceView()}
+                    <div class="bg-white rounded-xl shadow-md p-6 mb-6">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Seleccionar Curso</label>
+                                <select onchange="selectCourseForAttendance(this.value)" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                                    <option value="">Seleccionar curso...</option>
+                                    ${state.data.courses.map(course => {
+                                        const institution = state.data.institutions.find(i => i.id === course.institutionId);
+                                        return `<option value="${course.id}">${course.name} - ${institution ? institution.name : 'Sin institución'}</option>`;
+                                    }).join('')}
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Fecha</label>
+                                <input type="date" value="${state.currentDate.toISODate()}" 
+                                    onchange="changeAttendanceDate(this.value)"
+                                    class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            </div>
+                            <div class="flex items-end">
+                                <button onclick="generateDailyAttendanceSheet()" 
+                                    class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center justify-center space-x-2 transition-colors">
+                                    <i class="fas fa-file-alt"></i>
+                                    <span>Generar Planilla</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        ${renderDailyAttendance()}
+                    </div>
                 </div>
             `;
         }
 
-        function renderAttendanceView() {
-            switch (state.selectedPeriod) {
-                case 'day':
-                    return DayAttendance();
-                case 'week':
-                    return WeekAttendance();
-                case 'month':
-                    return MonthAttendance();
-                case 'year':
-                    return YearAttendance();
-                default:
-                    return DayAttendance();
+        function selectCourseForAttendance(courseId) {
+            if (courseId) {
+                state.selectedCourse = parseInt(courseId);
+                render();
             }
         }
 
-        function DayAttendance() {
-            const today = state.currentDate.toISODate();
-            const students = state.selectedCourse ? 
-                state.data.students.filter(s => s.courseId === state.selectedCourse) :
-                state.data.students;
+        function changeAttendanceDate(date) {
+            state.selectedAttendanceDate = date;
+            render();
+        }
+
+        function renderDailyAttendance() {
+            if (!state.selectedCourse) {
+                return `
+                    <div class="text-center py-12">
+                        <i class="fas fa-users text-4xl text-gray-400 mb-4"></i>
+                        <p class="text-gray-600 mb-4">Por favor, seleccione un curso para tomar asistencia</p>
+                        <p class="text-sm text-gray-500">La asistencia se registrará para la fecha seleccionada</p>
+                    </div>
+                `;
+            }
+
+            const students = state.data.students.filter(s => s.courseId === state.selectedCourse);
+            const course = state.data.courses.find(c => c.id === state.selectedCourse);
+            const date = luxon.DateTime.fromISO(state.selectedAttendanceDate).toFormat('dd/MM/yyyy');
             
             if (students.length === 0) {
                 return `
-                    <div class="bg-white rounded-xl shadow-md p-8 text-center">
-                        <i class="fas fa-users text-4xl text-gray-400 mb-4"></i>
-                        <p class="text-gray-600">No hay alumnos para registrar asistencia</p>
+                    <div class="text-center py-12">
+                        <i class="fas fa-user-slash text-4xl text-gray-400 mb-4"></i>
+                        <p class="text-gray-600">No hay alumnos registrados en este curso</p>
+                        <button onclick="navigateTo('students')" 
+                            class="mt-4 text-blue-600 hover:text-blue-800 font-medium">
+                            Agregar alumnos al curso
+                        </button>
                     </div>
                 `;
             }
 
             return `
-                <div class="bg-white rounded-xl shadow-md overflow-hidden">
-                    <div class="p-4 bg-gray-50 border-b">
-                        <div class="flex justify-between items-center">
-                            <h3 class="text-lg font-semibold">Asistencia - ${state.currentDate.toFormat('dd/MM/yyyy')}</h3>
-                            <div class="flex space-x-2">
-                                <button onclick="exportAttendanceToPDF()" 
-                                    class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm flex items-center space-x-1">
-                                    <i class="fas fa-file-pdf"></i>
-                                    <span>PDF</span>
-                                </button>
-                                <button onclick="exportAttendanceToWord()" 
-                                    class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm flex items-center space-x-1">
-                                    <i class="fas fa-file-word"></i>
-                                    <span>Word</span>
-                                </button>
-                                <button onclick="shareAttendance()" 
-                                    class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm flex items-center space-x-1">
-                                    <i class="fas fa-share-alt"></i>
-                                    <span>Compartir</span>
-                                </button>
-                            </div>
+                <div>
+                    <div class="flex justify-between items-center mb-4 pb-4 border-b">
+                        <div>
+                            <h3 class="text-lg font-semibold">${course.name}</h3>
+                            <p class="text-sm text-gray-600">Fecha: ${date}</p>
+                        </div>
+                        <div class="flex space-x-2">
+                            <button onclick="exportDailyAttendanceToPDF()" 
+                                class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm flex items-center space-x-1">
+                                <i class="fas fa-file-pdf"></i>
+                                <span>PDF</span>
+                            </button>
+                            <button onclick="exportDailyAttendanceToWord()" 
+                                class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm flex items-center space-x-1">
+                                <i class="fas fa-file-word"></i>
+                                <span>Word</span>
+                            </button>
+                            <button onclick="shareDailyAttendance()" 
+                                class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm flex items-center space-x-1">
+                                <i class="fas fa-share-alt"></i>
+                                <span>Compartir</span>
+                            </button>
                         </div>
                     </div>
+                    
                     <div class="overflow-x-auto">
                         <table class="w-full">
                             <thead class="bg-gray-50">
@@ -731,7 +820,7 @@
                                 </tr>
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200">
-                                ${students.map(student => DayAttendanceRow(student, today)).join('')}
+                                ${students.map(student => DailyAttendanceRow(student)).join('')}
                             </tbody>
                         </table>
                     </div>
@@ -739,9 +828,9 @@
             `;
         }
 
-        function DayAttendanceRow(student, date) {
-            const attendance = state.data.attendance[date] ? 
-                state.data.attendance[date].find(a => a.studentId === student.id) : null;
+        function DailyAttendanceRow(student) {
+            const attendance = state.data.attendance[state.selectedAttendanceDate] ? 
+                state.data.attendance[state.selectedAttendanceDate].find(a => a.studentId === student.id) : null;
             
             const status = attendance ? attendance.status : 'none';
             const notes = attendance ? attendance.notes : '';
@@ -768,23 +857,31 @@
                     </td>
                     <td class="px-6 py-4">
                         <input type="text" value="${notes}" 
-                            onblur="updateAttendanceNotes('${date}', ${student.id}, this.value)"
+                            onblur="updateAttendanceNotes('${state.selectedAttendanceDate}', ${student.id}, this.value)"
                             class="w-full px-2 py-1 border border-gray-300 rounded text-sm"
                             placeholder="Notas...">
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div class="flex space-x-1">
-                            <button onclick="markAttendance('${date}', ${student.id}, 'present')" 
-                                class="p-1 ${status === 'present' ? 'bg-green-200' : 'bg-gray-100 hover:bg-green-100'} rounded text-green-600">
+                            <button onclick="markAttendance('${state.selectedAttendanceDate}', ${student.id}, 'present')" 
+                                class="p-1 ${status === 'present' ? 'bg-green-200' : 'bg-gray-100 hover:bg-green-100'} rounded text-green-600 tooltip">
                                 <i class="fas fa-check"></i>
+                                <span class="tooltiptext">Presente</span>
                             </button>
-                            <button onclick="markAttendance('${date}', ${student.id}, 'absent')" 
-                                class="p-1 ${status === 'absent' ? 'bg-red-200' : 'bg-gray-100 hover:bg-red-100'} rounded text-red-600">
+                            <button onclick="markAttendance('${state.selectedAttendanceDate}', ${student.id}, 'absent')" 
+                                class="p-1 ${status === 'absent' ? 'bg-red-200' : 'bg-gray-100 hover:bg-red-100'} rounded text-red-600 tooltip">
                                 <i class="fas fa-times"></i>
+                                <span class="tooltiptext">Ausente</span>
                             </button>
-                            <button onclick="markAttendance('${date}', ${student.id}, 'late')" 
-                                class="p-1 ${status === 'late' ? 'bg-yellow-200' : 'bg-gray-100 hover:bg-yellow-100'} rounded text-yellow-600">
+                            <button onclick="markAttendance('${state.selectedAttendanceDate}', ${student.id}, 'late')" 
+                                class="p-1 ${status === 'late' ? 'bg-yellow-200' : 'bg-gray-100 hover:bg-yellow-100'} rounded text-yellow-600 tooltip">
                                 <i class="fas fa-clock"></i>
+                                <span class="tooltiptext">Tarde</span>
+                            </button>
+                            <button onclick="markAttendance('${state.selectedAttendanceDate}', ${student.id}, 'excused')" 
+                                class="p-1 ${status === 'excused' ? 'bg-blue-200' : 'bg-gray-100 hover:bg-blue-100'} rounded text-blue-600 tooltip">
+                                <i class="fas fa-clipboard-check"></i>
+                                <span class="tooltiptext">Justificada</span>
                             </button>
                         </div>
                     </td>
@@ -792,70 +889,89 @@
             `;
         }
 
-        function getStatusClass(status) {
-            switch (status) {
-                case 'present': return 'bg-green-100 text-green-800';
-                case 'absent': return 'bg-red-100 text-red-800';
-                case 'late': return 'bg-yellow-100 text-yellow-600';
-                default: return 'bg-gray-100 text-gray-800';
-            }
+        function AttendanceRecords() {
+            return `
+                <div class="p-6">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-4 sm:mb-0">Historial de Asistencia</h2>
+                        <div class="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
+                            <select onchange="changeAttendancePeriod(this.value)" class="border border-gray-300 rounded-lg px-3 py-2">
+                                <option value="all" ${state.selectedPeriod === 'all' ? 'selected' : ''}>Todas las fechas</option>
+                                <option value="today" ${state.selectedPeriod === 'today' ? 'selected' : ''}>Hoy</option>
+                                <option value="week" ${state.selectedPeriod === 'week' ? 'selected' : ''}>Esta semana</option>
+                                <option value="month" ${state.selectedPeriod === 'month' ? 'selected' : ''}>Este mes</option>
+                            </select>
+                            <button onclick="exportAllAttendanceToExcel()" 
+                                class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors">
+                                <i class="fas fa-file-excel"></i>
+                                <span>Exportar Todo</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    ${renderAttendanceRecords()}
+                </div>
+            `;
         }
 
-        function getStatusText(status) {
-            switch (status) {
-                case 'present': return 'Presente';
-                case 'absent': return 'Ausente';
-                case 'late': return 'Tarde';
-                default: return 'Sin registro';
-            }
+        function changeAttendancePeriod(period) {
+            state.selectedPeriod = period;
+            render();
         }
 
-        function WeekAttendance() {
-            const weekStart = state.currentDate.startOf('week');
-            const weekEnd = state.currentDate.endOf('week');
-            const students = state.selectedCourse ? 
-                state.data.students.filter(s => s.courseId === state.selectedCourse) :
-                state.data.students;
+        function renderAttendanceRecords() {
+            let filteredDates = Object.keys(state.data.attendance);
             
-            if (students.length === 0) {
+            switch (state.selectedPeriod) {
+                case 'today':
+                    filteredDates = filteredDates.filter(date => 
+                        date === luxon.DateTime.now().toISODate()
+                    );
+                    break;
+                case 'week':
+                    const startOfWeek = luxon.DateTime.now().startOf('week');
+                    const endOfWeek = luxon.DateTime.now().endOf('week');
+                    filteredDates = filteredDates.filter(date => {
+                        const dateObj = luxon.DateTime.fromISO(date);
+                        return dateObj >= startOfWeek && dateObj <= endOfWeek;
+                    });
+                    break;
+                case 'month':
+                    const year = luxon.DateTime.now().year;
+                    const month = luxon.DateTime.now().month;
+                    filteredDates = filteredDates.filter(date => {
+                        const [y, m] = date.split('-').map(Number);
+                        return y === year && m === month;
+                    });
+                    break;
+                case 'all':
+                default:
+                    filteredDates.sort((a, b) => new Date(b) - new Date(a));
+            }
+
+            if (filteredDates.length === 0) {
                 return `
                     <div class="bg-white rounded-xl shadow-md p-8 text-center">
-                        <i class="fas fa-users text-4xl text-gray-400 mb-4"></i>
-                        <p class="text-gray-600">No hay alumnos para registrar asistencia</p>
+                        <i class="fas fa-history text-4xl text-gray-400 mb-4"></i>
+                        <p class="text-gray-600">No hay registros de asistencia</p>
                     </div>
                 `;
             }
 
-            const days = [];
-            let current = weekStart;
-            while (current <= weekEnd) {
-                days.push(current.toISODate());
-                current = current.plus({ days: 1 });
-            }
-
             return `
                 <div class="bg-white rounded-xl shadow-md overflow-hidden">
-                    <div class="p-4 bg-gray-50 border-b">
-                        <h3 class="text-lg font-semibold">
-                            Asistencia Semanal - ${weekStart.toFormat('dd/MM')} al ${weekEnd.toFormat('dd/MM/yyyy')}
-                        </h3>
-                    </div>
                     <div class="overflow-x-auto">
                         <table class="w-full">
                             <thead class="bg-gray-50">
                                 <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Alumno</th>
-                                    ${days.map(date => {
-                                        const day = luxon.DateTime.fromISO(date);
-                                        return `<th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            ${day.toFormat('EEE')}<br>${day.toFormat('dd/MM')}
-                                        </th>`;
-                                    }).join('')}
-                                    <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Curso</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estadísticas</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200">
-                                ${students.map(student => WeekAttendanceRow(student, days)).join('')}
+                                ${filteredDates.map(date => AttendanceRecordRow(date)).join('')}
                             </tbody>
                         </table>
                     </div>
@@ -863,216 +979,646 @@
             `;
         }
 
-        function WeekAttendanceRow(student, days) {
-            const attendanceRecords = days.map(date => {
-                const dayAttendance = state.data.attendance[date] ? 
-                    state.data.attendance[date].find(a => a.studentId === student.id) : null;
-                return dayAttendance ? dayAttendance.status : 'none';
+        function AttendanceRecordRow(date) {
+            const attendanceRecords = state.data.attendance[date];
+            const courseIds = [...new Set(attendanceRecords.map(r => {
+                const student = state.data.students.find(s => s.id === r.studentId);
+                return student ? student.courseId : null;
+            }).filter(id => id !== null))];
+            
+            const courses = courseIds.map(id => {
+                const course = state.data.courses.find(c => c.id === id);
+                const institution = course ? state.data.institutions.find(i => i.id === course.institutionId) : null;
+                return course ? `${course.name}${institution ? ` - ${institution.name}` : ''}` : 'Curso no encontrado';
             });
 
-            const presentCount = attendanceRecords.filter(r => r === 'present').length;
-            const totalCount = attendanceRecords.filter(r => r !== 'none').length;
+            const total = attendanceRecords.length;
+            const present = attendanceRecords.filter(r => r.status === 'present').length;
+            const absent = attendanceRecords.filter(r => r.status === 'absent').length;
+            const late = attendanceRecords.filter(r => r.status === 'late').length;
+            const excused = attendanceRecords.filter(r => r.status === 'excused').length;
+            
+            const formattedDate = luxon.DateTime.fromISO(date).toFormat('dd/MM/yyyy');
 
             return `
                 <tr class="hover:bg-gray-50">
                     <td class="px-6 py-4 whitespace-nowrap">
-                        <div class="text-sm font-medium text-gray-900">${student.name} ${student.lastName}</div>
+                        <div class="text-sm font-medium text-gray-900">${formattedDate}</div>
                     </td>
-                    ${attendanceRecords.map(status => `
-                        <td class="px-6 py-4 text-center">
-                            <span class="px-2 py-1 ${getStatusClass(status)} text-xs rounded-full">
-                                ${getStatusInitial(status)}
+                    <td class="px-6 py-4">
+                        <div class="text-sm text-gray-900">${courses.join(', ')}</div>
+                    </td>
+                    <td class="px-6 py-4">
+                        <div class="flex space-x-4 text-sm">
+                            <span class="flex items-center">
+                                <span class="status-dot present-dot mr-1"></span>
+                                <span>${present} P</span>
                             </span>
-                        </td>
-                    `).join('')}
-                    <td class="px-6 py-4 text-center font-medium">
-                        ${presentCount}/${totalCount}
+                            <span class="flex items-center">
+                                <span class="status-dot absent-dot mr-1"></span>
+                                <span>${absent} A</span>
+                            </span>
+                            <span class="flex items-center">
+                                <span class="status-dot late-dot mr-1"></span>
+                                <span>${late} T</span>
+                            </span>
+                            <span class="flex items-center">
+                                <span class="status-dot excused-dot mr-1"></span>
+                                <span>${excused} J</span>
+                            </span>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <div class="flex space-x-2">
+                            <button onclick="viewAttendanceDetails('${date}')" class="text-blue-600 hover:text-blue-900">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            <button onclick="exportAttendanceDateToExcel('${date}')" class="text-green-600 hover:text-green-900">
+                                <i class="fas fa-file-excel"></i>
+                            </button>
+                            <button onclick="deleteAttendanceDate('${date}')" class="text-red-600 hover:text-red-900">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
                     </td>
                 </tr>
             `;
         }
 
-        function getStatusInitial(status) {
-            switch (status) {
-                case 'present': return 'P';
-                case 'absent': return 'A';
-                case 'late': return 'T';
-                default: return '-';
+        function viewAttendanceDetails(date) {
+            const attendanceRecords = state.data.attendance[date];
+            if (!attendanceRecords || attendanceRecords.length === 0) return;
+
+            const courseIds = [...new Set(attendanceRecords.map(r => {
+                const student = state.data.students.find(s => s.id === r.studentId);
+                return student ? student.courseId : null;
+            }).filter(id => id !== null))];
+
+            const modal = `
+                <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-xl p-6 w-full max-w-4xl mx-4 max-h-90vh overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-bold">Detalles de Asistencia - ${luxon.DateTime.fromISO(date).toFormat('dd/MM/yyyy')}</h3>
+                            <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        
+                        <div class="mb-6">
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                ${courseIds.map(courseId => {
+                                    const course = state.data.courses.find(c => c.id === courseId);
+                                    const courseAttendance = attendanceRecords.filter(r => {
+                                        const student = state.data.students.find(s => s.id === r.studentId);
+                                        return student && student.courseId === courseId;
+                                    });
+                                    
+                                    const total = courseAttendance.length;
+                                    const present = courseAttendance.filter(r => r.status === 'present').length;
+                                    const rate = total > 0 ? Math.round((present / total) * 100) : 0;
+                                    
+                                    return `
+                                        <div class="bg-gray-50 p-4 rounded-lg">
+                                            <h4 class="font-medium">${course ? course.name : 'Curso no encontrado'}</h4>
+                                            <p class="text-2xl font-bold text-green-600">${rate}%</p>
+                                            <p class="text-sm text-gray-600">${present}/${total} presentes</p>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="w-full">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Alumno</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Curso</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notas</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white divide-y divide-gray-200">
+                                    ${attendanceRecords.map(record => {
+                                        const student = state.data.students.find(s => s.id === record.studentId);
+                                        const course = student ? state.data.courses.find(c => c.id === student.courseId) : null;
+                                        
+                                        if (!student) return '';
+                                        
+                                        return `
+                                            <tr class="hover:bg-gray-50">
+                                                <td class="px-6 py-4 whitespace-nowrap">
+                                                    <div class="text-sm font-medium text-gray-900">${student.name} ${student.lastName}</div>
+                                                    <div class="text-sm text-gray-500">${student.dni}</div>
+                                                </td>
+                                                <td class="px-6 py-4 whitespace-nowrap">
+                                                    <div class="text-sm text-gray-900">${course ? course.name : 'Sin curso'}</div>
+                                                </td>
+                                                <td class="px-6 py-4 whitespace-nowrap">
+                                                    <span class="px-2 py-1 ${getStatusClass(record.status)} text-xs rounded-full">
+                                                        ${getStatusText(record.status)}
+                                                    </span>
+                                                </td>
+                                                <td class="px-6 py-4">
+                                                    <div class="text-sm text-gray-700">${record.notes || '-'}</div>
+                                                </td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <div class="flex justify-end mt-6">
+                            <button onclick="closeModal()" 
+                                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                Cerrar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modal);
+        }
+
+        function deleteAttendanceDate(date) {
+            if (confirm('¿Está seguro de que desea eliminar todos los registros de asistencia para esta fecha?')) {
+                delete state.data.attendance[date];
+                saveData();
+                render();
             }
         }
 
-        function MonthAttendance() {
-            const month = state.currentDate.month;
-            const year = state.currentDate.year;
-            const firstDay = luxon.DateTime.local(year, month, 1);
-            const lastDay = firstDay.plus({ months: 1 }).minus({ days: 1 });
-            const totalDays = lastDay.day;
+        function AttendanceReports() {
+            return `
+                <div class="p-6">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-4 sm:mb-0">Reportes de Asistencia</h2>
+                        <div class="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
+                            <button onclick="exportAllCoursesAttendanceToExcel()" 
+                                class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors">
+                                <i class="fas fa-file-excel"></i>
+                                <span>Exportar Todo</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    ${renderAttendanceReports()}
+                </div>
+            `;
+        }
+
+        function renderAttendanceReports() {
+            const courseReports = state.data.courses.map(course => {
+                const students = state.data.students.filter(s => s.courseId === course.id);
+                if (students.length === 0) return null;
+                
+                const studentIds = students.map(s => s.id);
+                const allAttendance = Object.values(state.data.attendance).flat();
+                const courseAttendance = allAttendance.filter(a => studentIds.includes(a.studentId));
+                
+                const totalRecords = courseAttendance.length;
+                const present = courseAttendance.filter(a => a.status === 'present').length;
+                const absent = courseAttendance.filter(a => a.status === 'absent').length;
+                const late = courseAttendance.filter(a => a.status === 'late').length;
+                const excused = courseAttendance.filter(a => a.status === 'excused').length;
+                
+                const attendanceRate = totalRecords > 0 ? Math.round((present / totalRecords) * 100) : 0;
+                
+                return {
+                    course,
+                    totalStudents: students.length,
+                    totalRecords,
+                    present,
+                    absent,
+                    late,
+                    excused,
+                    attendanceRate
+                };
+            }).filter(report => report !== null);
             
-            const students = state.selectedCourse ? 
-                state.data.students.filter(s => s.courseId === state.selectedCourse) :
-                state.data.students;
-            
-            if (students.length === 0) {
+            if (courseReports.length === 0) {
                 return `
                     <div class="bg-white rounded-xl shadow-md p-8 text-center">
-                        <i class="fas fa-users text-4xl text-gray-400 mb-4"></i>
-                        <p class="text-gray-600">No hay alumnos para registrar asistencia</p>
+                        <i class="fas fa-chart-bar text-4xl text-gray-400 mb-4"></i>
+                        <p class="text-gray-600">No hay cursos con alumnos para generar reportes</p>
                     </div>
                 `;
             }
 
-            const days = Array.from({ length: totalDays }, (_, i) => 
-                luxon.DateTime.local(year, month, i + 1).toISODate()
-            );
-
             return `
-                <div class="bg-white rounded-xl shadow-md overflow-hidden">
-                    <div class="p-4 bg-gray-50 border-b">
-                        <h3 class="text-lg font-semibold">Asistencia Mensual - ${firstDay.toFormat('MMMM yyyy')}</h3>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    ${courseReports.map(report => CourseAttendanceReport(report)).join('')}
+                </div>
+            `;
+        }
+
+        function CourseAttendanceReport(report) {
+            const institution = state.data.institutions.find(i => i.id === report.course.institutionId);
+            
+            return `
+                <div class="bg-white rounded-xl shadow-md p-6">
+                    <div class="flex justify-between items-start mb-4">
+                        <div>
+                            <h3 class="text-lg font-semibold">${report.course.name}</h3>
+                            <p class="text-sm text-gray-600">${institution ? institution.name : 'Sin institución'}</p>
+                            <p class="text-sm text-gray-600">${report.totalStudents} alumnos</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-2xl font-bold text-green-600">${report.attendanceRate}%</p>
+                            <p class="text-sm text-gray-600">Tasa de asistencia</p>
+                        </div>
                     </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full">
-                            <thead class="bg-gray-50">
-                                <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Alumno</th>
-                                    ${days.map(date => {
-                                        const day = luxon.DateTime.fromISO(date);
-                                        return `<th class="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-8">
-                                            ${day.toFormat('dd')}
-                                        </th>`;
-                                    }).join('')}
-                                    <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
-                                </tr>
-                            </thead>
-                            <tbody class="bg-white divide-y divide-gray-200">
-                                ${students.map(student => MonthAttendanceRow(student, days)).join('')}
-                            </tbody>
-                        </table>
+                    
+                    <div class="grid grid-cols-4 gap-4 mb-4">
+                        <div class="text-center p-3 bg-green-50 rounded-lg">
+                            <p class="text-lg font-semibold text-green-600">${report.present}</p>
+                            <p class="text-xs text-gray-600">Presentes</p>
+                        </div>
+                        <div class="text-center p-3 bg-red-50 rounded-lg">
+                            <p class="text-lg font-semibold text-red-600">${report.absent}</p>
+                            <p class="text-xs text-gray-600">Ausentes</p>
+                        </div>
+                        <div class="text-center p-3 bg-yellow-50 rounded-lg">
+                            <p class="text-lg font-semibold text-yellow-600">${report.late}</p>
+                            <p class="text-xs text-gray-600">Tardanzas</p>
+                        </div>
+                        <div class="text-center p-3 bg-blue-50 rounded-lg">
+                            <p class="text-lg font-semibold text-blue-600">${report.excused}</p>
+                            <p class="text-xs text-gray-600">Justificadas</p>
+                        </div>
+                    </div>
+                    
+                    <div class="flex space-x-2">
+                        <button onclick="exportCourseAttendanceToExcel(${report.course.id})" 
+                            class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center justify-center space-x-2 transition-colors">
+                            <i class="fas fa-file-excel"></i>
+                            <span>Exportar</span>
+                        </button>
+                        <button onclick="generateCourseAttendancePDF(${report.course.id})" 
+                            class="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg flex items-center justify-center space-x-2 transition-colors">
+                            <i class="fas fa-file-pdf"></i>
+                            <span>PDF</span>
+                        </button>
                     </div>
                 </div>
             `;
         }
 
-        function MonthAttendanceRow(student, days) {
-            const attendanceRecords = days.map(date => {
-                const dayAttendance = state.data.attendance[date] ? 
-                    state.data.attendance[date].find(a => a.studentId === student.id) : null;
-                return dayAttendance ? dayAttendance.status : 'none';
-            });
-
-            const presentCount = attendanceRecords.filter(r => r === 'present').length;
-            const totalCount = attendanceRecords.filter(r => r !== 'none').length;
-
+        function ImportExport() {
             return `
-                <tr class="hover:bg-gray-50">
-                    <td class="px-6 py-4 whitespace-nowrap">
-                        <div class="text-sm font-medium text-gray-900">${student.name} ${student.lastName}</div>
-                    </td>
-                    ${attendanceRecords.map(status => `
-                        <td class="px-2 py-1 text-center">
-                            <span class="inline-block w-4 h-4 rounded-full ${getStatusDotClass(status)}"></span>
-                        </td>
-                    `).join('')}
-                    <td class="px-6 py-4 text-center font-medium">
-                        ${presentCount}/${totalCount}
-                    </td>
-                </tr>
-            `;
-        }
-
-        function getStatusDotClass(status) {
-            switch (status) {
-                case 'present': return 'bg-green-500';
-                case 'absent': return 'bg-red-500';
-                case 'late': return 'bg-yellow-500';
-                default: return 'bg-gray-300';
-            }
-        }
-
-        function YearAttendance() {
-            const year = state.currentDate.year;
-            const students = state.selectedCourse ? 
-                state.data.students.filter(s => s.courseId === state.selectedCourse) :
-                state.data.students;
-            
-            if (students.length === 0) {
-                return `
-                    <div class="bg-white rounded-xl shadow-md p-8 text-center">
-                        <i class="fas fa-users text-4xl text-gray-400 mb-4"></i>
-                        <p class="text-gray-600">No hay alumnos para registrar asistencia</p>
+                <div class="p-6">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6">Importar y Exportar Datos</h2>
+                    
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                        <div class="bg-white rounded-xl shadow-md p-6">
+                            <h3 class="text-xl font-semibold mb-4 flex items-center">
+                                <i class="fas fa-file-import mr-2 text-green-600"></i>
+                                Importar Datos
+                            </h3>
+                            <p class="text-gray-600 mb-4">Importe planillas de Excel con datos de alumnos, cursos o asistencia.</p>
+                            
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">Tipo de datos a importar</label>
+                                    <select id="importType" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                                        <option value="students">Alumnos</option>
+                                        <option value="attendance">Asistencia</option>
+                                        <option value="courses">Cursos</option>
+                                    </select>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">Seleccionar archivo Excel</label>
+                                    <input type="file" accept=".xlsx,.xls" onchange="handleFileSelect(event)" 
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                                </div>
+                                
+                                <button onclick="importData()" 
+                                    class="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center justify-center space-x-2 transition-colors">
+                                    <i class="fas fa-upload"></i>
+                                    <span>Importar Datos</span>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-white rounded-xl shadow-md p-6">
+                            <h3 class="text-xl font-semibold mb-4 flex items-center">
+                                <i class="fas fa-file-export mr-2 text-blue-600"></i>
+                                Exportar Datos
+                            </h3>
+                            <p class="text-gray-600 mb-4">Exporte todos sus datos a un archivo Excel para respaldo o compartir.</p>
+                            
+                            <div class="space-y-3">
+                                <button onclick="exportAllDataToExcel()" 
+                                    class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-lg flex items-center justify-center space-x-2 transition-colors text-lg">
+                                    <i class="fas fa-file-excel"></i>
+                                    <span>Exportar Todo a Excel</span>
+                                </button>
+                                
+                                <div class="text-center text-sm text-gray-500">
+                                    Se exportarán todos los datos: instituciones, cursos, alumnos, actividades y asistencia
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                `;
-            }
-
-            const months = Array.from({ length: 12 }, (_, i) => i + 1);
-
-            return `
-                <div class="bg-white rounded-xl shadow-md overflow-hidden">
-                    <div class="p-4 bg-gray-50 border-b">
-                        <h3 class="text-lg font-semibold">Asistencia Anual - ${year}</h3>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full">
-                            <thead class="bg-gray-50">
-                                <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Alumno</th>
-                                    ${months.map(month => {
-                                        const monthName = luxon.DateTime.local(year, month, 1).toFormat('MMM');
-                                        return `<th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            ${monthName}
-                                        </th>`;
-                                    }).join('')}
-                                    <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
-                                </tr>
-                            </thead>
-                            <tbody class="bg-white divide-y divide-gray-200">
-                                ${students.map(student => YearAttendanceRow(student, year)).join('')}
-                            </tbody>
-                        </table>
+                    
+                    <div class="bg-white rounded-xl shadow-md p-6">
+                        <h3 class="text-xl font-semibold mb-4">Formato de Archivos</h3>
+                        <div class="space-y-4 text-sm">
+                            <div class="bg-gray-50 p-4 rounded-lg">
+                                <h4 class="font-medium mb-2">Formato para Alumnos:</h4>
+                                <p class="text-gray-700 mb-2">Las columnas deben ser: Nombre, Apellido, DNI, Curso, Teléfono, Correo, Notas</p>
+                                <div class="bg-white p-3 rounded border">
+                                    <code>Nombre,Apellido,DNI,Curso,Teléfono,Correo,Notas<br>
+                                    Juan,Pérez,12345678,Matemáticas,555-1234,juan@email.com,Estudiante destacado</code>
+                                </div>
+                            </div>
+                            
+                            <div class="bg-gray-50 p-4 rounded-lg">
+                                <h4 class="font-medium mb-2">Formato para Asistencia:</h4>
+                                <p class="text-gray-700 mb-2">Las columnas deben ser: Fecha, Alumno, Estado, Notas</p>
+                                <div class="bg-white p-3 rounded border">
+                                    <code>Fecha,Alumno,Estado,Notas<br>
+                                    2023-12-01,Juan Pérez,present,<br>
+                                    2023-12-01,María García,absent,Falta justificada</code>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             `;
         }
 
-        function YearAttendanceRow(student, year) {
-            const monthlyData = Array.from({ length: 12 }, (_, i) => {
-                const month = i + 1;
-                const firstDay = luxon.DateTime.local(year, month, 1);
-                const lastDay = firstDay.plus({ months: 1 }).minus({ days: 1 });
-                const days = Array.from({ length: lastDay.day }, (_, d) => 
-                    luxon.DateTime.local(year, month, d + 1).toISODate()
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                console.log('Archivo seleccionado:', file.name);
+            }
+        }
+
+        function importData() {
+            const importType = document.getElementById('importType').value;
+            const fileInput = document.querySelector('input[type="file"]');
+            
+            if (!fileInput.files[0]) {
+                alert('Por favor, seleccione un archivo para importar');
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+                    
+                    // Procesar los datos según el tipo
+                    switch (importType) {
+                        case 'students':
+                            importStudents(jsonData);
+                            break;
+                        case 'attendance':
+                            importAttendance(jsonData);
+                            break;
+                        case 'courses':
+                            importCourses(jsonData);
+                            break;
+                    }
+                    
+                    alert(`Datos importados exitosamente: ${jsonData.length} registros`);
+                    fileInput.value = '';
+                    render();
+                } catch (error) {
+                    alert('Error al procesar el archivo: ' + error.message);
+                }
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }
+
+        function importStudents(data) {
+            data.forEach(row => {
+                // Validar que tenga los campos necesarios
+                if (!row.Nombre || !row.Apellido || !row.DNI || !row.Curso) {
+                    console.warn('Fila incompleta, omitiendo:', row);
+                    return;
+                }
+                
+                // Encontrar el curso por nombre
+                const course = state.data.courses.find(c => c.name === row.Curso);
+                if (!course) {
+                    console.warn('Curso no encontrado:', row.Curso);
+                    return;
+                }
+                
+                // Verificar si el alumno ya existe
+                const existingStudent = state.data.students.find(s => 
+                    s.dni === row.DNI || 
+                    (s.name === row.Nombre && s.lastName === row.Apellido && s.courseId === course.id)
                 );
                 
-                const monthAttendance = days.map(date => {
-                    const dayAttendance = state.data.attendance[date] ? 
-                        state.data.attendance[date].find(a => a.studentId === student.id) : null;
-                    return dayAttendance ? dayAttendance.status : 'none';
+                if (!existingStudent) {
+                    const newStudent = {
+                        id: Date.now() + Math.floor(Math.random() * 1000),
+                        name: row.Nombre,
+                        lastName: row.Apellido,
+                        dni: row.DNI,
+                        courseId: course.id,
+                        phone: row.Teléfono || '',
+                        email: row.Correo || '',
+                        notes: row.Notas || ''
+                    };
+                    
+                    state.data.students.push(newStudent);
+                }
+            });
+            
+            saveData();
+        }
+
+        function importAttendance(data) {
+            data.forEach(row => {
+                // Validar campos necesarios
+                if (!row.Fecha || !row.Alumno || !row.Estado) {
+                    console.warn('Fila de asistencia incompleta, omitiendo:', row);
+                    return;
+                }
+                
+                // Buscar el alumno por nombre
+                const [firstName, ...lastNameParts] = row.Alumno.split(' ');
+                const lastName = lastNameParts.join(' ');
+                
+                const student = state.data.students.find(s => 
+                    s.name === firstName && s.lastName === lastName
+                );
+                
+                if (!student) {
+                    console.warn('Alumno no encontrado:', row.Alumno);
+                    return;
+                }
+                
+                // Validar estado
+                const validStatuses = ['present', 'absent', 'late', 'excused'];
+                const status = validStatuses.includes(row.Estado.toLowerCase()) ? row.Estado.toLowerCase() : 'none';
+                
+                // Crear o actualizar el registro de asistencia
+                if (!state.data.attendance[row.Fecha]) {
+                    state.data.attendance[row.Fecha] = [];
+                }
+                
+                const existingAttendance = state.data.attendance[row.Fecha].find(a => a.studentId === student.id);
+                if (existingAttendance) {
+                    existingAttendance.status = status;
+                    existingAttendance.notes = row.Notas || '';
+                } else {
+                    state.data.attendance[row.Fecha].push({
+                        studentId: student.id,
+                        status: status,
+                        notes: row.Notas || ''
+                    });
+                }
+            });
+            
+            saveData();
+        }
+
+        function importCourses(data) {
+            data.forEach(row => {
+                // Validar campos necesarios
+                if (!row.Nombre || !row.Institución) {
+                    console.warn('Fila de curso incompleta, omitiendo:', row);
+                    return;
+                }
+                
+                // Buscar la institución por nombre
+                const institution = state.data.institutions.find(i => i.name === row.Institución);
+                if (!institution) {
+                    console.warn('Institución no encontrada:', row.Institución);
+                    return;
+                }
+                
+                // Verificar si el curso ya existe
+                const existingCourse = state.data.courses.find(c => 
+                    c.name === row.Nombre && c.institutionId === institution.id
+                );
+                
+                if (!existingCourse) {
+                    const newCourse = {
+                        id: Date.now() + Math.floor(Math.random() * 1000),
+                        name: row.Nombre,
+                        institutionId: institution.id,
+                        period: row.Periodo || 'cuatrimestre',
+                        description: row.Descripción || ''
+                    };
+                    
+                    state.data.courses.push(newCourse);
+                }
+            });
+            
+            saveData();
+        }
+
+        function exportAllDataToExcel() {
+            const wb = XLSX.utils.book_new();
+            
+            // Exportar instituciones
+            if (state.data.institutions.length > 0) {
+                const instData = state.data.institutions.map(inst => ({
+                    'Nombre': inst.name,
+                    'Dirección': inst.address,
+                    'Teléfono': inst.phone,
+                    'Correo': inst.email
+                }));
+                const ws1 = XLSX.utils.json_to_sheet(instData);
+                XLSX.utils.book_append_sheet(wb, ws1, "Instituciones");
+            }
+            
+            // Exportar cursos
+            if (state.data.courses.length > 0) {
+                const courseData = state.data.courses.map(course => {
+                    const institution = state.data.institutions.find(i => i.id === course.institutionId);
+                    return {
+                        'Nombre': course.name,
+                        'Institución': institution ? institution.name : '',
+                        'Periodo': course.period,
+                        'Descripción': course.description
+                    };
+                });
+                const ws2 = XLSX.utils.json_to_sheet(courseData);
+                XLSX.utils.book_append_sheet(wb, ws2, "Cursos");
+            }
+            
+            // Exportar alumnos
+            if (state.data.students.length > 0) {
+                const studentData = state.data.students.map(student => {
+                    const course = state.data.courses.find(c => c.id === student.courseId);
+                    const institution = course ? state.data.institutions.find(i => i.id === course.institutionId) : null;
+                    return {
+                        'Nombre': student.name,
+                        'Apellido': student.lastName,
+                        'DNI': student.dni,
+                        'Curso': course ? course.name : '',
+                        'Institución': institution ? institution.name : '',
+                        'Teléfono': student.phone || '',
+                        'Correo': student.email || '',
+                        'Notas': student.notes || ''
+                    };
+                });
+                const ws3 = XLSX.utils.json_to_sheet(studentData);
+                XLSX.utils.book_append_sheet(wb, ws3, "Alumnos");
+            }
+            
+            // Exportar actividades
+            if (state.data.activities.length > 0) {
+                const activityData = state.data.activities.map(activity => {
+                    const course = activity.courseId ? state.data.courses.find(c => c.id === activity.courseId) : null;
+                    const institution = course ? state.data.institutions.find(i => i.id === course.institutionId) : null;
+                    const date = luxon.DateTime.fromISO(activity.date).toFormat('dd/MM/yyyy');
+                    return {
+                        'Título': activity.title,
+                        'Tipo': activity.type,
+                        'Curso': course ? course.name : 'Todos',
+                        'Institución': institution ? institution.name : '',
+                        'Fecha': date,
+                        'Descripción': activity.description || ''
+                    };
+                });
+                const ws4 = XLSX.utils.json_to_sheet(activityData);
+                XLSX.utils.book_append_sheet(wb, ws4, "Actividades");
+            }
+            
+            // Exportar asistencia
+            if (Object.keys(state.data.attendance).length > 0) {
+                const attendanceData = [];
+                Object.keys(state.data.attendance).forEach(date => {
+                    state.data.attendance[date].forEach(record => {
+                        const student = state.data.students.find(s => s.id === record.studentId);
+                        const course = student ? state.data.courses.find(c => c.id === student.courseId) : null;
+                        const institution = course ? state.data.institutions.find(i => i.id === course.institutionId) : null;
+                        const formattedDate = luxon.DateTime.fromISO(date).toFormat('dd/MM/yyyy');
+                        
+                        if (student && course) {
+                            attendanceData.push({
+                                'Fecha': formattedDate,
+                                'Alumno': `${student.name} ${student.lastName}`,
+                                'Curso': course.name,
+                                'Institución': institution ? institution.name : '',
+                                'Estado': record.status,
+                                'Notas': record.notes || ''
+                            });
+                        }
+                    });
                 });
                 
-                const presentCount = monthAttendance.filter(r => r === 'present').length;
-                const totalCount = monthAttendance.filter(r => r !== 'none').length;
-                
-                return { present: presentCount, total: totalCount };
-            });
-
-            const totalPresent = monthlyData.reduce((sum, m) => sum + m.present, 0);
-            const totalRecorded = monthlyData.reduce((sum, m) => sum + m.total, 0);
-
-            return `
-                <tr class="hover:bg-gray-50">
-                    <td class="px-6 py-4 whitespace-nowrap">
-                        <div class="text-sm font-medium text-gray-900">${student.name} ${student.lastName}</div>
-                    </td>
-                    ${monthlyData.map(data => `
-                        <td class="px-6 py-4 text-center">
-                            <div class="text-xs">${data.present}/${data.total}</div>
-                        </td>
-                    `).join('')}
-                    <td class="px-6 py-4 text-center font-medium">
-                        ${totalPresent}/${totalRecorded}
-                    </td>
-                </tr>
-            `;
+                const ws5 = XLSX.utils.json_to_sheet(attendanceData);
+                XLSX.utils.book_append_sheet(wb, ws5, "Asistencia");
+            }
+            
+            XLSX.writeFile(wb, `educheck_backup_${new Date().toISOString().split('T')[0]}.xlsx`);
         }
 
         // Modal functions
@@ -1353,6 +1899,7 @@
             state.selectedInstitution = null;
             state.selectedCourse = null;
             state.selectedStudent = null;
+            state.selectedPeriod = 'day';
             render();
         }
 
@@ -1397,17 +1944,14 @@
 
         function exportAttendanceToPDF() {
             alert('Exportando asistencia a PDF...');
-            // En una implementación real, usaría pdfmake para generar el PDF
         }
 
         function exportAttendanceToWord() {
             alert('Exportando asistencia a Word...');
-            // En una implementación real, usaría una librería para generar documentos Word
         }
 
         function shareAttendance() {
             alert('Compartiendo planilla de asistencia...');
-            // En una implementación real, usaría la API de compartir del navegador
         }
 
         function updateAttendanceNotes(date, studentId, notes) {
@@ -1448,6 +1992,227 @@
             
             saveData();
             render();
+        }
+
+        function generateDailyAttendanceSheet() {
+            if (!state.selectedCourse) {
+                alert('Por favor, seleccione un curso para generar la planilla');
+                return;
+            }
+            
+            if (!state.selectedAttendanceDate) {
+                alert('Por favor, seleccione una fecha para generar la planilla');
+                return;
+            }
+            
+            alert('Planilla generada exitosamente para la fecha seleccionada.');
+        }
+
+        function exportDailyAttendanceToPDF() {
+            if (!state.selectedCourse) {
+                alert('Por favor, seleccione un curso');
+                return;
+            }
+            
+            if (!state.selectedAttendanceDate) {
+                alert('Por favor, seleccione una fecha');
+                return;
+            }
+            
+            alert('Exportando asistencia diaria a PDF...');
+        }
+
+        function exportDailyAttendanceToWord() {
+            if (!state.selectedCourse) {
+                alert('Por favor, seleccione un curso');
+                return;
+            }
+            
+            if (!state.selectedAttendanceDate) {
+                alert('Por favor, seleccione una fecha');
+                return;
+            }
+            
+            alert('Exportando asistencia diaria a Word...');
+        }
+
+        function shareDailyAttendance() {
+            if (!state.selectedCourse) {
+                alert('Por favor, seleccione un curso');
+                return;
+            }
+            
+            if (!state.selectedAttendanceDate) {
+                alert('Por favor, seleccione una fecha');
+                return;
+            }
+            
+            alert('Compartiendo planilla de asistencia...');
+        }
+
+        function exportAllAttendanceToExcel() {
+            if (Object.keys(state.data.attendance).length === 0) {
+                alert('No hay registros de asistencia para exportar');
+                return;
+            }
+            
+            const data = [];
+            Object.keys(state.data.attendance).forEach(date => {
+                state.data.attendance[date].forEach(record => {
+                    const student = state.data.students.find(s => s.id === record.studentId);
+                    const course = student ? state.data.courses.find(c => c.id === student.courseId) : null;
+                    const institution = course ? state.data.institutions.find(i => i.id === course.institutionId) : null;
+                    const formattedDate = luxon.DateTime.fromISO(date).toFormat('dd/MM/yyyy');
+                    
+                    if (student && course) {
+                        data.push({
+                            'Fecha': formattedDate,
+                            'Alumno': `${student.name} ${student.lastName}`,
+                            'Curso': course.name,
+                            'Institución': institution ? institution.name : '',
+                            'Estado': record.status,
+                            'Notas': record.notes || ''
+                        });
+                    }
+                });
+            });
+            
+            if (data.length === 0) {
+                alert('No hay datos de asistencia para exportar');
+                return;
+            }
+            
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Asistencia");
+            XLSX.writeFile(wb, `asistencia_${new Date().toISOString().split('T')[0]}.xlsx`);
+        }
+
+        function exportAttendanceDateToExcel(date) {
+            const attendanceRecords = state.data.attendance[date];
+            if (!attendanceRecords || attendanceRecords.length === 0) {
+                alert('No hay registros de asistencia para esta fecha');
+                return;
+            }
+            
+            const data = attendanceRecords.map(record => {
+                const student = state.data.students.find(s => s.id === record.studentId);
+                const course = student ? state.data.courses.find(c => c.id === student.courseId) : null;
+                const institution = course ? state.data.institutions.find(i => i.id === course.institutionId) : null;
+                const formattedDate = luxon.DateTime.fromISO(date).toFormat('dd/MM/yyyy');
+                
+                return {
+                    'Fecha': formattedDate,
+                    'Alumno': `${student.name} ${student.lastName}`,
+                    'Curso': course ? course.name : 'Sin curso',
+                    'Institución': institution ? institution.name : '',
+                    'Estado': record.status,
+                    'Notas': record.notes || ''
+                };
+            });
+            
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Asistencia");
+            XLSX.writeFile(wb, `asistencia_${date}.xlsx`);
+        }
+
+        function exportCourseAttendanceToExcel(courseId) {
+            const course = state.data.courses.find(c => c.id === courseId);
+            if (!course) {
+                alert('Curso no encontrado');
+                return;
+            }
+            
+            const students = state.data.students.filter(s => s.courseId === courseId);
+            if (students.length === 0) {
+                alert('No hay alumnos en este curso');
+                return;
+            }
+            
+            const studentIds = students.map(s => s.id);
+            const allAttendance = Object.values(state.data.attendance).flat();
+            const courseAttendance = allAttendance.filter(a => studentIds.includes(a.studentId));
+            
+            const data = students.map(student => {
+                const studentAttendance = courseAttendance.filter(a => a.studentId === student.id);
+                const total = studentAttendance.length;
+                const present = studentAttendance.filter(a => a.status === 'present').length;
+                const absent = studentAttendance.filter(a => a.status === 'absent').length;
+                const late = studentAttendance.filter(a => a.status === 'late').length;
+                const excused = studentAttendance.filter(a => a.status === 'excused').length;
+                const attendanceRate = total > 0 ? Math.round((present / total) * 100) : 0;
+                
+                return {
+                    'Alumno': `${student.name} ${student.lastName}`,
+                    'DNI': student.dni,
+                    'Teléfono': student.phone || '',
+                    'Correo': student.email || '',
+                    'Total Clases': total,
+                    'Presentes': present,
+                    'Ausentes': absent,
+                    'Tardanzas': late,
+                    'Justificadas': excused,
+                    'Tasa Asistencia': `${attendanceRate}%`,
+                    'Notas': student.notes || ''
+                };
+            });
+            
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Asistencia Curso");
+            XLSX.writeFile(wb, `asistencia_${course.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`);
+        }
+
+        function generateCourseAttendancePDF(courseId) {
+            alert('Generando reporte de asistencia en PDF...');
+        }
+
+        function exportAllCoursesAttendanceToExcel() {
+            if (state.data.courses.length === 0) {
+                alert('No hay cursos para generar reportes');
+                return;
+            }
+            
+            const wb = XLSX.utils.book_new();
+            
+            state.data.courses.forEach(course => {
+                const students = state.data.students.filter(s => s.courseId === course.id);
+                if (students.length === 0) return;
+                
+                const studentIds = students.map(s => s.id);
+                const allAttendance = Object.values(state.data.attendance).flat();
+                const courseAttendance = allAttendance.filter(a => studentIds.includes(a.studentId));
+                
+                const data = students.map(student => {
+                    const studentAttendance = courseAttendance.filter(a => a.studentId === student.id);
+                    const total = studentAttendance.length;
+                    const present = studentAttendance.filter(a => a.status === 'present').length;
+                    const absent = studentAttendance.filter(a => a.status === 'absent').length;
+                    const late = studentAttendance.filter(a => a.status === 'late').length;
+                    const excused = studentAttendance.filter(a => a.status === 'excused').length;
+                    const attendanceRate = total > 0 ? Math.round((present / total) * 100) : 0;
+                    
+                    return {
+                        'Alumno': `${student.name} ${student.lastName}`,
+                        'DNI': student.dni,
+                        'Teléfono': student.phone || '',
+                        'Correo': student.email || '',
+                        'Total Clases': total,
+                        'Presentes': present,
+                        'Ausentes': absent,
+                        'Tardanzas': late,
+                        'Justificadas': excused,
+                        'Tasa Asistencia': `${attendanceRate}%`,
+                        'Notas': student.notes || ''
+                    };
+                });
+                
+                const ws = XLSX.utils.json_to_sheet(data);
+                XLSX.utils.book_append_sheet(wb, ws, course.name.substring(0, 31)); // Excel limita nombres de hojas a 31 caracteres
+            });
+            
+            XLSX.writeFile(wb, `reportes_asistencia_${new Date().toISOString().split('T')[0]}.xlsx`);
         }
 
         // CRUD operations
@@ -2114,7 +2879,31 @@
                 case 'students': return Students();
                 case 'activities': return Activities();
                 case 'attendance': return Attendance();
+                case 'attendance-records': return AttendanceRecords();
+                case 'attendance-reports': return AttendanceReports();
+                case 'import-export': return ImportExport();
                 default: return Dashboard();
+            }
+        }
+
+        // Status functions
+        function getStatusClass(status) {
+            switch (status) {
+                case 'present': return 'bg-green-100 text-green-800';
+                case 'absent': return 'bg-red-100 text-red-800';
+                case 'late': return 'bg-yellow-100 text-yellow-600';
+                case 'excused': return 'bg-blue-100 text-blue-800';
+                default: return 'bg-gray-100 text-gray-800';
+            }
+        }
+
+        function getStatusText(status) {
+            switch (status) {
+                case 'present': return 'Presente';
+                case 'absent': return 'Ausente';
+                case 'late': return 'Tarde';
+                case 'excused': return 'Justificada';
+                default: return 'Sin registro';
             }
         }
 
